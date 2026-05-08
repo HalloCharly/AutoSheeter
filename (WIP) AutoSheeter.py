@@ -6,11 +6,11 @@ import urllib.error
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
-json_file_name = "" #json file for the googlesheet api.
+json_file_name = '' #json file for the googlesheet api.
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "extra", json_file_name)
- 
+
 SPREADSHEET_ID = '' #set ur spreadsheet id here (you get it from the url when in the spreadsheet)
 SOURCE_SHEET = '' #the tab of your streamoverlay, so that it auto changes to the current tab you are currently in
 
@@ -43,14 +43,17 @@ FALLBACK_STATS_FILE = os.path.join(
 )
 
 START_ROW = 3
-
-COLUMN_MAP = { #you can change the column where the data is put in (always starts in row 3 and it automatically goes onward)
+#you can change the column where the data is put in (always starts in row 3 and it automatically goes onward)
+COLUMN_MAP = {
     'MoonInfo_Name': 'F',
     'MoonInfo_Weather': 'G',
     'DungeonInfo_Interior': 'H',
     'DungeonInfo_ItemCount': 'I',
     'CollectedTotal': 'K',
     'BottomLine': 'L',
+    'ValueSold': 'S',
+    'NewQuota': 'B',
+    'ExtraNumber': 'J',
 }
 
 
@@ -123,6 +126,9 @@ def strip_apostrophe(value):
 def normalize_stats(stats):
     dungeon = stats.get('DungeonInfo') or {}
     moon = stats.get('MoonInfo') or {}
+    BeeInfo_Values = (stats.get('BeeInfo') or {}).get('Values') or []
+    BirdInfo_EggValues = (stats.get('BirdInfo') or {}).get('EggValues') or []
+    extra_number = len(BeeInfo_Values) + len(BirdInfo_EggValues)
     return {
         'MoonInfo_Name': strip_apostrophe(moon.get('Name', '')),
         'MoonInfo_Weather': strip_apostrophe(moon.get('Weather', '')),
@@ -130,6 +136,9 @@ def normalize_stats(stats):
         'DungeonInfo_ItemCount': int(strip_apostrophe(dungeon.get('ItemCount', 0))),
         'CollectedTotal': int(strip_apostrophe(stats.get('CollectedTotal', 0))),
         'BottomLine': int(strip_apostrophe(stats.get('BottomLine', 0))),
+        'ValueSold': int(strip_apostrophe(stats.get('ValueSold', 0))),
+        'NewQuota': int(strip_apostrophe(stats.get('NewQuota', 0))),
+        'ExtraNumber': extra_number,
     }
 
 def get_next_empty_row():
@@ -161,7 +170,20 @@ def update_sheet_from_stats(stats):
     normalized = normalize_stats(stats)
     target_row = get_next_empty_row()
 
+    if normalized['MoonInfo_Name'] == '71 Gordion':
+        print("✓ On 71 Gordion — skipping entirely")
+        if normalized['ValueSold'] == 0 or normalized['NewQuota'] == 0:
+            print("✓ On 71 Gordion — ValueSold or NewQuota is 0, skipping entirely")
+            return
+        if normalized['ValueSold'] != 0:
+            write_to_cell(normalized['ValueSold'], f'{COLUMN_MAP["ValueSold"]}{target_row - 1}')
+        if normalized['NewQuota'] != 0:
+            write_to_cell(normalized['NewQuota'], f'{COLUMN_MAP["NewQuota"]}{target_row}')
+
     for key, col in COLUMN_MAP.items():
+        if key in ('ValueSold', 'NewQuota') and normalized[key] == 0:
+            print(f"✓ {key} is 0, skipping")
+            continue
         write_to_cell(normalized[key], f'{col}{target_row}')
 
 
