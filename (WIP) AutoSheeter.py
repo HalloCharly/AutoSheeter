@@ -8,9 +8,6 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
 
-#CONFIG in config.ini
-
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 config = configparser.ConfigParser()
 config_path = os.path.join(BASE_DIR, "config.ini")
@@ -26,6 +23,8 @@ SOURCE_SHEET       = config.get("GoogleSheets", "source_sheet")
 cell_to_autochange = config.get("GoogleSheets", "cell_to_autochange")
 
 START_ROW = config.getint("Sheet", "start_row")
+
+PLAYER_COLUMNS = [c.strip() for c in config.get("Columns", "Players").split(",") if c.strip()]
 
 COLUMN_MAP = {
     "MoonInfo_Name":        config.get("Columns", "MoonInfo_Name"),
@@ -136,12 +135,45 @@ def strip_apostrophe(value):
     return str(value).lstrip("'")
 
 
+def normalize_players(raw_players: dict) -> list[dict]:
+    players = []
+    for steam_id, data in raw_players.items():
+        name         = strip_apostrophe(data.get("Name", steam_id))
+        alive        = data.get("Alive", False)
+        disconnected = data.get("Disconnected", False)
+        time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
+        cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
+
+        if disconnected:
+            status = "DC"
+        elif alive:
+            status = "S"
+        else:
+            status = "X"
+
+        note_parts = [name]
+        if time_of_death:
+            note_parts.append(f"Time of Death: {time_of_death}")
+        if cause_of_death:
+            note_parts.append(f"Cause of Death: {cause_of_death}")
+        note = "\n".join(note_parts)
+
+        players.append({"status": status, "note": note})
+
+    return players
+
+
 def normalize_stats(stats):
     dungeon = stats.get("DungeonInfo") or {}
     moon    = stats.get("MoonInfo") or {}
     BeeInfo_Values     = (stats.get("BeeInfo") or {}).get("Values") or []
     BirdInfo_EggValues = (stats.get("BirdInfo") or {}).get("EggValues") or []
     extra_number = len(BeeInfo_Values) + len(BirdInfo_EggValues)
+
+    raw_players = stats.get("Players") or {}
+    if not isinstance(raw_players, dict):
+        raw_players = {}
+
     return {
         "MoonInfo_Name":         strip_apostrophe(moon.get("Name", "")),
         "MoonInfo_Weather":      strip_apostrophe(moon.get("Weather", "")),
@@ -155,6 +187,7 @@ def normalize_stats(stats):
         "Seed":                  strip_apostrophe(stats.get("Seed", "")),
         "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
         "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
+        "Players":               normalize_players(raw_players),
     }
 
 
@@ -200,6 +233,41 @@ def write_to_cell(value, cell):
         print(f"✗ Error writing to {target_sheet}!{cell}: {e}")
 
 
+def write_cell_with_note(col: str, row: int, value: str, note: str):
+    """Write a text value and a note to a cell using batchUpdate."""
+    sheet_id  = get_sheet_id(target_sheet)
+    col_index = col_letter_to_index(col)
+    row_index = row - 1
+
+    requests = [{
+        "updateCells": {
+            "range": {
+                "sheetId":          sheet_id,
+                "startRowIndex":    row_index,
+                "endRowIndex":      row_index + 1,
+                "startColumnIndex": col_index,
+                "endColumnIndex":   col_index + 1,
+            },
+            "rows": [{
+                "values": [{
+                    "userEnteredValue": {"stringValue": value},
+                    "note": note,
+                }]
+            }],
+            "fields": "userEnteredValue,note",
+        }
+    }]
+
+    try:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": requests}
+        ).execute()
+        print(f"✓ Wrote '{value}' + note to {col}{row}")
+    except Exception as e:
+        print(f"✗ Error writing cell/note to {col}{row}: {e}")
+
+
 def write_checkbox_with_note(col: str, row: int, note_text: str):
     sheet_id  = get_sheet_id(target_sheet)
     col_index = col_letter_to_index(col)
@@ -237,6 +305,17 @@ def write_checkbox_with_note(col: str, row: int, note_text: str):
         print(f"✗ Error writing checkbox/note to {col}{row}: {e}")
 
 
+def write_players(players: list[dict], row: int):
+    if len(players) > len(PLAYER_COLUMNS):
+        print(f"⚠ More players ({len(players)}) than configured columns ({len(PLAYER_COLUMNS)}); extras ignored")
+
+    for i, player in enumerate(players):
+        if i >= len(PLAYER_COLUMNS):
+            break
+        col = PLAYER_COLUMNS[i]
+        write_cell_with_note(col, row, player["status"], player["note"])
+
+
 def update_sheet_from_stats(stats):
     normalized = normalize_stats(stats)
     target_row = get_next_empty_row()
@@ -264,6 +343,8 @@ def update_sheet_from_stats(stats):
             continue
 
         write_to_cell(value, f"{col}{target_row}")
+
+    write_players(normalized["Players"], target_row)
 
 
 def main():
