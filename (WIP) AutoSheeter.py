@@ -20,15 +20,12 @@ if not os.path.exists(config_path):
 
 config.read(config_path)
 
-
-json_file_name       = config.get("GoogleSheets", "json_file_name")
-SPREADSHEET_ID       = config.get("GoogleSheets", "spreadsheet_id")
-SOURCE_SHEET         = config.get("GoogleSheets", "source_sheet")
-cell_to_autochange   = config.get("GoogleSheets", "cell_to_autochange")
-
+json_file_name     = config.get("GoogleSheets", "json_file_name")
+SPREADSHEET_ID     = config.get("GoogleSheets", "spreadsheet_id")
+SOURCE_SHEET       = config.get("GoogleSheets", "source_sheet")
+cell_to_autochange = config.get("GoogleSheets", "cell_to_autochange")
 
 START_ROW = config.getint("Sheet", "start_row")
-
 
 COLUMN_MAP = {
     "MoonInfo_Name":        config.get("Columns", "MoonInfo_Name"),
@@ -41,29 +38,28 @@ COLUMN_MAP = {
     "NewQuota":             config.get("Columns", "NewQuota"),
     "ExtraNumber":          config.get("Columns", "ExtraNumber"),
     "Seed":                 config.get("Columns", "Seed"),
+    "SIDType":              config.get("Columns", "SID"),
+    "InfestationType":      config.get("Columns", "Infestation"),
 }
 
+CHECKBOX_FIELDS = {"SIDType", "InfestationType"}
 
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "extra", json_file_name)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
 
-
 result = service.spreadsheets().values().get(
     spreadsheetId=SPREADSHEET_ID,
     range=f"{SOURCE_SHEET}!{cell_to_autochange}"
 ).execute()
 
-
 values = result.get("values")
 if not values or not values[0]:
     raise ValueError(f"Cell {cell_to_autochange} is empty or missing")
 
-
 target_sheet = values[0][0].strip()
 print(f"Target sheet from {cell_to_autochange}: '{target_sheet}'")
-
 
 STATS_URL = os.getenv("STATS_URL", "http://localhost:2145/")
 FALLBACK_STATS_FILE = os.path.join(
@@ -143,7 +139,7 @@ def strip_apostrophe(value):
 def normalize_stats(stats):
     dungeon = stats.get("DungeonInfo") or {}
     moon    = stats.get("MoonInfo") or {}
-    BeeInfo_Values    = (stats.get("BeeInfo") or {}).get("Values") or []
+    BeeInfo_Values     = (stats.get("BeeInfo") or {}).get("Values") or []
     BirdInfo_EggValues = (stats.get("BirdInfo") or {}).get("EggValues") or []
     extra_number = len(BeeInfo_Values) + len(BirdInfo_EggValues)
     return {
@@ -156,8 +152,27 @@ def normalize_stats(stats):
         "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
         "NewQuota":              int(strip_apostrophe(stats.get("NewQuota", 0))),
         "ExtraNumber":           extra_number,
-        "Seed":                  strip_apostrophe(stats.get("Seed", ""))
+        "Seed":                  strip_apostrophe(stats.get("Seed", "")),
+        "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
+        "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
     }
+
+
+def col_letter_to_index(col: str) -> int:
+    col = col.upper()
+    index = 0
+    for ch in col:
+        index = index * 26 + (ord(ch) - ord("A") + 1)
+    return index - 1
+
+
+def get_sheet_id(sheet_name: str) -> int:
+    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    for sheet in meta.get("sheets", []):
+        props = sheet.get("properties", {})
+        if props.get("title") == sheet_name:
+            return props["sheetId"]
+    raise ValueError(f"Sheet '{sheet_name}' not found in spreadsheet")
 
 
 def get_next_empty_row():
@@ -185,6 +200,43 @@ def write_to_cell(value, cell):
         print(f"✗ Error writing to {target_sheet}!{cell}: {e}")
 
 
+def write_checkbox_with_note(col: str, row: int, note_text: str):
+    sheet_id  = get_sheet_id(target_sheet)
+    col_index = col_letter_to_index(col)
+    row_index = row - 1
+
+    checked = bool(note_text.strip())
+
+    requests = [{
+        "updateCells": {
+            "range": {
+                "sheetId":          sheet_id,
+                "startRowIndex":    row_index,
+                "endRowIndex":      row_index + 1,
+                "startColumnIndex": col_index,
+                "endColumnIndex":   col_index + 1,
+            },
+            "rows": [{
+                "values": [{
+                    "userEnteredValue": {"boolValue": checked},
+                    "note": note_text if checked else "",
+                }]
+            }],
+            "fields": "userEnteredValue,note",
+        }
+    }]
+
+    try:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": requests}
+        ).execute()
+        state = "checked" if checked else "unchecked"
+        print(f"✓ Checkbox {col}{row} {state}, note: '{note_text}'")
+    except Exception as e:
+        print(f"✗ Error writing checkbox/note to {col}{row}: {e}")
+
+
 def update_sheet_from_stats(stats):
     normalized = normalize_stats(stats)
     target_row = get_next_empty_row()
@@ -201,10 +253,17 @@ def update_sheet_from_stats(stats):
         return
 
     for key, col in COLUMN_MAP.items():
-        if key in ("ValueSold", "NewQuota") and normalized[key] == 0:
+        value = normalized[key]
+
+        if key in CHECKBOX_FIELDS:
+            write_checkbox_with_note(col, target_row, str(value))
+            continue
+
+        if key in ("ValueSold", "NewQuota") and value == 0:
             print(f"✓ {key} is 0, skipping")
             continue
-        write_to_cell(normalized[key], f"{col}{target_row}")
+
+        write_to_cell(value, f"{col}{target_row}")
 
 
 def main():
