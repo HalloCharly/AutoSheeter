@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
 
-#Config everything in cinfig.ini.
+#Config everything in "config.ini".
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -138,12 +138,19 @@ def strip_apostrophe(value):
     return str(value).lstrip("'")
 
 
+def strip_moon_number(name: str) -> str:
+    parts = name.split(" ", 1)
+    if len(parts) == 2 and parts[0].rstrip("-").isdigit():
+        return parts[1]
+    return name
+
+
 def normalize_players(raw_players: dict) -> list[dict]:
     players = []
     for steam_id, data in raw_players.items():
-        name         = strip_apostrophe(data.get("Name", steam_id))
-        alive        = data.get("Alive", False)
-        disconnected = data.get("Disconnected", False)
+        name           = strip_apostrophe(data.get("Name", steam_id))
+        alive          = data.get("Alive", False)
+        disconnected   = data.get("Disconnected", False)
         time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
         cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
 
@@ -179,9 +186,14 @@ def normalize_stats(stats):
     if not isinstance(raw_players, dict):
         raw_players = {}
 
+    moon_name = strip_moon_number(strip_apostrophe(moon.get("Name", "")))
+    weather   = strip_apostrophe(moon.get("Weather", ""))
+    if weather == "Mild":
+        weather = "Clear"
+
     return {
-        "MoonInfo_Name":         strip_apostrophe(moon.get("Name", "")),
-        "MoonInfo_Weather":      strip_apostrophe(moon.get("Weather", "")),
+        "MoonInfo_Name":         moon_name,
+        "MoonInfo_Weather":      weather,
         "DungeonInfo_Interior":  strip_apostrophe(dungeon.get("Interior", "")),
         "DungeonInfo_ItemCount": int(strip_apostrophe(dungeon.get("ItemCount", 0))),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
@@ -239,7 +251,6 @@ def write_to_cell(value, cell):
 
 
 def write_cell_with_note(col: str, row: int, value: str, note: str):
-    """Write a text value and a note to a cell using batchUpdate."""
     sheet_id  = get_sheet_id(target_sheet)
     col_index = col_letter_to_index(col)
     row_index = row - 1
