@@ -8,6 +8,9 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
 
+#Config everything in cinfig.ini.
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 config = configparser.ConfigParser()
 config_path = os.path.join(BASE_DIR, "config.ini")
@@ -146,6 +149,8 @@ def normalize_players(raw_players: dict) -> list[dict]:
 
         if disconnected:
             status = "DC"
+        elif cause_of_death == "Abandonment":
+            status = "M"
         elif alive:
             status = "S"
         else:
