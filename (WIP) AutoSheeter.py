@@ -20,28 +20,27 @@ if not os.path.exists(config_path):
 
 config.read(config_path)
 
-json_file_name     = config.get("GoogleSheets", "json_file_name")
-SPREADSHEET_ID     = config.get("GoogleSheets", "spreadsheet_id")
-SOURCE_SHEET       = config.get("GoogleSheets", "source_sheet")
-cell_to_autochange = config.get("GoogleSheets", "cell_to_autochange")
+json_file_name = config.get("GoogleSheets", "json_file_name")
+SPREADSHEET_ID = config.get("GoogleSheets", "spreadsheet_id")
+target_sheet   = config.get("GoogleSheets", "source_sheet")
 
 START_ROW = config.getint("Sheet", "start_row")
 
 PLAYER_COLUMNS = [c.strip() for c in config.get("Columns", "Players").split(",") if c.strip()]
 
 COLUMN_MAP = {
-    "MoonInfo_Name":        config.get("Columns", "MoonInfo_Name"),
-    "MoonInfo_Weather":     config.get("Columns", "MoonInfo_Weather"),
-    "DungeonInfo_Interior": config.get("Columns", "DungeonInfo_Interior"),
-    "DungeonInfo_ItemCount":config.get("Columns", "DungeonInfo_ItemCount"),
-    "CollectedTotal":       config.get("Columns", "CollectedTotal"),
-    "BottomLine":           config.get("Columns", "BottomLine"),
-    "ValueSold":            config.get("Columns", "ValueSold"),
-    "NewQuota":             config.get("Columns", "NewQuota"),
-    "ExtraNumber":          config.get("Columns", "ExtraNumber"),
-    "Seed":                 config.get("Columns", "Seed"),
-    "SIDType":              config.get("Columns", "SID"),
-    "InfestationType":      config.get("Columns", "Infestation"),
+    "MoonInfo_Name":         config.get("Columns", "MoonInfo_Name"),
+    "MoonInfo_Weather":      config.get("Columns", "MoonInfo_Weather"),
+    "DungeonInfo_Interior":  config.get("Columns", "DungeonInfo_Interior"),
+    "DungeonInfo_ItemCount": config.get("Columns", "DungeonInfo_ItemCount"),
+    "CollectedTotal":        config.get("Columns", "CollectedTotal"),
+    "BottomLine":            config.get("Columns", "BottomLine"),
+    "ValueSold":             config.get("Columns", "ValueSold"),
+    "NewQuota":              config.get("Columns", "NewQuota"),
+    "ExtraNumber":           config.get("Columns", "ExtraNumber"),
+    "Seed":                  config.get("Columns", "Seed"),
+    "SIDType":               config.get("Columns", "SID"),
+    "InfestationType":       config.get("Columns", "Infestation"),
 }
 
 CHECKBOX_FIELDS = {"SIDType", "InfestationType"}
@@ -51,17 +50,7 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
 
-result = service.spreadsheets().values().get(
-    spreadsheetId=SPREADSHEET_ID,
-    range=f"{SOURCE_SHEET}!{cell_to_autochange}"
-).execute()
-
-values = result.get("values")
-if not values or not values[0]:
-    raise ValueError(f"Cell {cell_to_autochange} is empty or missing")
-
-target_sheet = values[0][0].strip()
-print(f"Target sheet from {cell_to_autochange}: '{target_sheet}'")
+print(f"Target sheet: '{target_sheet}'")
 
 STATS_URL = os.getenv("STATS_URL", "http://localhost:2145/")
 FALLBACK_STATS_FILE = os.path.join(
@@ -108,7 +97,8 @@ def get_stats_from_http():
         print(f"✗ Error parsing JSON from {STATS_URL}: {e}")
         print(f"  raw response snippet: {repr(raw[:200])}")
     except Exception as e:
-        print(f"✗ Unexpected error fetching stats from {STATS_URL}: {e}")
+        if "timed out" not in str(e):
+            print(f"✗ Unexpected error fetching stats from {STATS_URL}: {e}")
     return None
 
 
