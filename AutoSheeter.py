@@ -20,50 +20,39 @@ config.read(config_path)
 json_file_name     = config.get("GoogleSheets", "json_file_name")
 SPREADSHEET_ID     = config.get("GoogleSheets", "spreadsheet_id")
 SOURCE_SHEET       = config.get("GoogleSheets", "source_sheet")
-cell_to_autochange = config.get("GoogleSheets", "cell_to_autochange")
 
 START_ROW = config.getint("Sheet", "start_row")
 
 PLAYER_COLUMNS = [c.strip() for c in config.get("Columns", "Players").split(",") if c.strip()]
 
 COLUMN_MAP = {
+    "NewQuota":             config.get("Columns", "NewQuota"),
     "MoonInfo_Name":        config.get("Columns", "MoonInfo_Name"),
     "MoonInfo_Weather":     config.get("Columns", "MoonInfo_Weather"),
     "DungeonInfo_Interior": config.get("Columns", "DungeonInfo_Interior"),
     "DungeonInfo_ItemCount":config.get("Columns", "DungeonInfo_ItemCount"),
+    "BeehiveAmount":        config.get("Columns", "BeehiveAmount"),
+    "BeehiveValue":         config.get("Columns", "BeehiveValue"),
+    "EggValue":             config.get("Columns", "EggValue"),
     "CollectedTotal":       config.get("Columns", "CollectedTotal"),
     "BottomLine":           config.get("Columns", "BottomLine"),
     "ValueSold":            config.get("Columns", "ValueSold"),
-    "NewQuota":             config.get("Columns", "NewQuota"),
-    "ExtraNumber":          config.get("Columns", "ExtraNumber"),
-    "Seed":                 config.get("Columns", "Seed"),
     "SIDType":              config.get("Columns", "SID"),
     "InfestationType":      config.get("Columns", "Infestation"),
     "IndoorFog":            config.get("Columns", "IndoorFog"),
     "MeteorShower":         config.get("Columns", "MeteorShower"),
-    "BeehiveAmount":        config.get("Columns", "BeehiveAmount"),
-    "BeehiveValue":         config.get("Columns", "BeehiveValue"),
-    "EggAmount":            config.get("Columns", "EggAmount", fallback=None),
-    "EggValue":             config.get("Columns", "EggValue"),
+    "GiftBoxes":            config.get("Columns", "GiftBoxes", fallback=None),
+    "Seed":                 config.get("Columns", "Seed"),
 }
 
-CHECKBOX_FIELDS = {"SIDType", "InfestationType", "IndoorFog", "MeteorShower", "EggAmount"}
+CHECKBOX_FIELDS = {"SIDType", "InfestationType", "IndoorFog", "MeteorShower"}
 
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "extra", json_file_name)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
 
-result = service.spreadsheets().values().get(
-    spreadsheetId=SPREADSHEET_ID,
-    range=f"{SOURCE_SHEET}!{cell_to_autochange}"
-).execute()
-
-values = result.get("values")
-if not values or not values[0]:
-    raise ValueError(f"Cell {cell_to_autochange} is empty or missing")
-
-target_sheet = values[0][0].strip()
+target_sheet = SOURCE_SHEET
 print(f"Target sheet: '{target_sheet}'")
 
 STATS_URL = os.getenv("STATS_URL", "http://localhost:2145/")
@@ -73,6 +62,23 @@ FALLBACK_STATS_FILE = os.path.join(
     "LethalCompanyStats",
     "stats.json"
 )
+
+
+def col_letter_to_index(col: str) -> int:
+    col = col.upper()
+    index = 0
+    for ch in col:
+        index = index * 26 + (ord(ch) - ord("A") + 1)
+    return index - 1
+
+
+def sorted_column_map_keys(column_map: dict) -> list[str]:
+    def sort_key(k):
+        col = column_map[k]
+        if col is None:
+            return (10 ** 9,)
+        return (col_letter_to_index(col),)
+    return sorted(column_map.keys(), key=sort_key)
 
 
 def parse_sse_payload(raw_text):
@@ -133,22 +139,21 @@ def strip_moon_number(name: str) -> str:
 def normalize_players(raw_players: dict) -> list[dict]:
     players = []
     for steam_id, data in raw_players.items():
-        name           = strip_apostrophe(data.get("Name", steam_id))
-        alive          = data.get("Alive", False)
-        disconnected   = data.get("Disconnected", False)
-        time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
+        alive = data.get("Alive", False)
+        disconnected = data.get("Disconnected", False)
+        time_of_death = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
         cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
 
         if disconnected:
             status = "DC"
-        elif cause_of_death == "Abandonment":
+        elif cause_of_death.lower() in ("abandonment", "abandoned"):
             status = "M"
         elif alive:
             status = "S"
         else:
             status = "X"
 
-        note_parts = [name]
+        note_parts = []
         if time_of_death:
             note_parts.append(f"Time of Death: {time_of_death}")
         if cause_of_death:
@@ -160,66 +165,91 @@ def normalize_players(raw_players: dict) -> list[dict]:
     return players
 
 
-def normalize_stats(stats):
-    dungeon   = stats.get("DungeonInfo") or {}
-    moon      = stats.get("MoonInfo") or {}
-    bee_info  = stats.get("BeeInfo") or {}
-    bird_info = stats.get("BirdInfo") or {}
+def normalize_gift_boxes(raw_gift_boxes: list) -> dict:
+    if not raw_gift_boxes:
+        return {"amount": 0, "total_value": 0, "cell_value": "", "note": ""}
 
-    bee_values = bee_info.get("Values") or []
-    egg_values = bird_info.get("EggValues") or []
+    collected = [box for box in raw_gift_boxes if box.get("Collected", False)]
+
+    amount = len(collected)
+    total_net = sum(
+        int(box.get("GiftValue", 0)) - int(box.get("ScrapValue", 0))
+        for box in collected
+    )
+
+    sign = "+" if total_net >= 0 else ""
+    cell_value = f"{amount}|{sign}{total_net}" if collected else ""
+
+    note_lines = []
+    for i, box in enumerate(raw_gift_boxes, start=1):
+        gift = int(box.get("GiftValue", 0))
+        scrap = int(box.get("ScrapValue", 0))
+        was_collected = box.get("Collected", False)
+        note_lines.append(f"Box {i}: GiftValue={gift}, ScrapValue={scrap}, Collected={was_collected}")
+    note = "\n".join(note_lines)
+
+    return {"amount": amount, "total_value": total_net, "cell_value": cell_value, "note": note}
+
+
+def normalize_stats(stats):
+    dungeon = stats.get("DungeonInfo") or {}
+    moon = stats.get("MoonInfo") or {}
+    bee_info = stats.get("BeeInfo") or {}
+    egg_info = stats.get("EggInfo") or {}
+    gift_boxes = stats.get("GiftBoxes") or []
+
+    bee_available = [int(v) for v in (bee_info.get("Available") or [])]
+    egg_available = [int(v) for v in (egg_info.get("Available") or [])]
 
     raw_players = stats.get("Players") or {}
     if not isinstance(raw_players, dict):
         raw_players = {}
 
     moon_name = strip_moon_number(strip_apostrophe(moon.get("Name", "")))
-    weather   = strip_apostrophe(moon.get("Weather", ""))
+    weather = strip_apostrophe(moon.get("Weather", ""))
     if weather == "Mild":
         weather = "Clear"
 
     indoor_fog_val = "true" if stats.get("IndoorFog", False) else ""
 
     meteor_time = strip_apostrophe(stats.get("MeteorShowerTime", "")).strip()
-    meteor_val  = meteor_time if meteor_time else ""
+    meteor_val = meteor_time if meteor_time else ""
 
-    bee_min = sorted([int(v) for v in bee_values if int(v) < 100])
-    bee_max = sorted([int(v) for v in bee_values if int(v) >= 100])
-    beehive_amount = f"{len(bee_min)}|{len(bee_max)}" if bee_values else ""
-    beehive_value  = f"{bee_min[0] if bee_min else 0}|{bee_max[0] if bee_max else 0}" if bee_values else ""
+    bee_small = [v for v in bee_available if v < 100]
+    bee_large = [v for v in bee_available if v >= 100]
+    if bee_available:
+        small_val = bee_small[0] if bee_small else 0
+        large_val = bee_large[0] if bee_large else 0
+        beehive_amount = f"{len(bee_small)}|{len(bee_large)}"
+        beehive_value = f"{small_val}|{large_val}"
+    else:
+        beehive_amount = ""
+        beehive_value = ""
 
-    egg_amount_val  = "true" if egg_values else ""
-    egg_value_total = sum(int(v) for v in egg_values) if egg_values else 0
+    egg_value_str = "|".join(str(v) for v in sorted(egg_available)) if egg_available else ""
+
+    gift_data = normalize_gift_boxes(gift_boxes)
 
     return {
-        "MoonInfo_Name":         moon_name,
-        "MoonInfo_Weather":      weather,
-        "DungeonInfo_Interior":  strip_apostrophe(dungeon.get("Interior", "")),
+        "NewQuota": int(strip_apostrophe(stats.get("NewQuota", 0))),
+        "MoonInfo_Name": moon_name,
+        "MoonInfo_Weather": weather,
+        "DungeonInfo_Interior": strip_apostrophe(dungeon.get("Interior", "")),
         "DungeonInfo_ItemCount": int(strip_apostrophe(dungeon.get("ItemCount", 0))),
-        "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
-        "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
-        "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
-        "NewQuota":              int(strip_apostrophe(stats.get("NewQuota", 0))),
-        "ExtraNumber":           len(bee_values) + len(egg_values),
-        "Seed":                  strip_apostrophe(stats.get("Seed", "")),
-        "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
-        "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
-        "IndoorFog":             indoor_fog_val,
-        "MeteorShower":          meteor_val,
-        "BeehiveAmount":          beehive_amount,
-        "BeehiveValue":          beehive_value,
-        "EggAmount":             egg_amount_val,
-        "EggValue":              egg_value_total,
-        "Players":               normalize_players(raw_players),
+        "BeehiveAmount": beehive_amount,
+        "BeehiveValue": beehive_value,
+        "EggValue": egg_value_str,
+        "CollectedTotal": int(strip_apostrophe(stats.get("CollectedTotal", 0))),
+        "BottomLine": int(strip_apostrophe(stats.get("BottomLine", 0))),
+        "ValueSold": int(strip_apostrophe(stats.get("ValueSold", 0))),
+        "SIDType": strip_apostrophe(stats.get("SIDType", "")),
+        "InfestationType": strip_apostrophe(stats.get("InfestationType", "")),
+        "IndoorFog": indoor_fog_val,
+        "MeteorShower": meteor_val,
+        "GiftBoxes": gift_data,
+        "Seed": strip_apostrophe(stats.get("Seed", "")),
+        "Players": normalize_players(raw_players),
     }
-
-
-def col_letter_to_index(col: str) -> int:
-    col = col.upper()
-    index = 0
-    for ch in col:
-        index = index * 26 + (ord(ch) - ord("A") + 1)
-    return index - 1
 
 
 def get_sheet_id(sheet_name: str) -> int:
@@ -251,7 +281,7 @@ def write_to_cell(value, cell):
 
 
 def write_cell_with_note(col: str, row: int, value: str, note: str):
-    sheet_id  = get_sheet_id(target_sheet)
+    sheet_id = get_sheet_id(target_sheet)
     col_index = col_letter_to_index(col)
     row_index = row - 1
 
@@ -260,11 +290,11 @@ def write_cell_with_note(col: str, row: int, value: str, note: str):
         body={"requests": [{
             "updateCells": {
                 "range": {
-                    "sheetId":          sheet_id,
-                    "startRowIndex":    row_index,
-                    "endRowIndex":      row_index + 1,
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_index,
+                    "endRowIndex": row_index + 1,
                     "startColumnIndex": col_index,
-                    "endColumnIndex":   col_index + 1,
+                    "endColumnIndex": col_index + 1,
                 },
                 "rows": [{"values": [{"userEnteredValue": {"stringValue": value}, "note": note}]}],
                 "fields": "userEnteredValue,note",
@@ -273,24 +303,46 @@ def write_cell_with_note(col: str, row: int, value: str, note: str):
     ).execute()
 
 
-def write_checkbox_with_note(col: str, row: int, note_text: str):
-    sheet_id  = get_sheet_id(target_sheet)
+def write_checkbox(col: str, row: int, checked: bool):
+    sheet_id = get_sheet_id(target_sheet)
     col_index = col_letter_to_index(col)
     row_index = row - 1
-    checked   = bool(note_text.strip())
 
     service.spreadsheets().batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
         body={"requests": [{
             "updateCells": {
                 "range": {
-                    "sheetId":          sheet_id,
-                    "startRowIndex":    row_index,
-                    "endRowIndex":      row_index + 1,
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_index,
+                    "endRowIndex": row_index + 1,
                     "startColumnIndex": col_index,
-                    "endColumnIndex":   col_index + 1,
+                    "endColumnIndex": col_index + 1,
                 },
-                "rows": [{"values": [{"userEnteredValue": {"boolValue": checked}, "note": note_text if checked else ""}]}],
+                "rows": [{"values": [{"userEnteredValue": {"boolValue": checked}}]}],
+                "fields": "userEnteredValue",
+            }
+        }]}
+    ).execute()
+
+
+def write_checkbox_with_note(col: str, row: int, checked: bool, note: str):
+    sheet_id = get_sheet_id(target_sheet)
+    col_index = col_letter_to_index(col)
+    row_index = row - 1
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={"requests": [{
+            "updateCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row_index,
+                    "endRowIndex": row_index + 1,
+                    "startColumnIndex": col_index,
+                    "endColumnIndex": col_index + 1,
+                },
+                "rows": [{"values": [{"userEnteredValue": {"boolValue": checked}, "note": note if checked else ""}]}],
                 "fields": "userEnteredValue,note",
             }
         }]}
@@ -300,39 +352,71 @@ def write_checkbox_with_note(col: str, row: int, note_text: str):
 def write_players(players: list[dict], row: int):
     if len(players) > len(PLAYER_COLUMNS):
         print(f"⚠ More players ({len(players)}) than configured columns ({len(PLAYER_COLUMNS)}); extras ignored")
-    for i, player in enumerate(players):
-        if i >= len(PLAYER_COLUMNS):
+    sorted_player_cols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
+    for i, col in enumerate(sorted_player_cols):
+        if i >= len(players):
             break
-        write_cell_with_note(PLAYER_COLUMNS[i], row, player["status"], player["note"])
+        player = players[i]
+        if player["note"]:
+            write_cell_with_note(col, row, player["status"], player["note"])
+        else:
+            write_to_cell(player["status"], f"{col}{row}")
+
+
+def write_gift_boxes(gift_data: dict, col: str, row: int):
+    if not gift_data["note"]:
+        write_to_cell("X", f"{col}{row}")
+        return
+    if gift_data["cell_value"]:
+        write_cell_with_note(col, row, gift_data["cell_value"], gift_data["note"])
+    else:
+        write_cell_with_note(col, row, "X", gift_data["note"])
 
 
 def update_sheet_from_stats(stats):
     normalized = normalize_stats(stats)
     target_row = get_next_empty_row()
+    moon_name = normalized["MoonInfo_Name"]
 
-    if normalized["MoonInfo_Name"] == "71 Gordion":
-        if normalized["ValueSold"] == 0 or normalized["NewQuota"] == 0:
+    if "gordion" in moon_name.lower():
+        value_sold = normalized["ValueSold"]
+        new_quota = normalized["NewQuota"]
+        if value_sold == 0 and new_quota == 0:
             return
-        if normalized["ValueSold"] != 0:
-            write_to_cell(normalized["ValueSold"], f'{COLUMN_MAP["ValueSold"]}{target_row - 3}')
-        if normalized["NewQuota"] != 0:
-            write_to_cell(normalized["NewQuota"], f'{COLUMN_MAP["NewQuota"]}{target_row}')
-        print(f"Updated {target_sheet} (Gordion: sold/quota)")
+        if value_sold != 0:
+            write_to_cell(value_sold, f'{COLUMN_MAP["ValueSold"]}{target_row - 3}')
+        if new_quota != 0:
+            write_to_cell(new_quota, f'{COLUMN_MAP["NewQuota"]}{target_row}')
+        print(f"Updated {target_sheet} (Gordion: sold={value_sold}, quota={new_quota})")
         return
 
-    for key, col in COLUMN_MAP.items():
+    for key in sorted_column_map_keys(COLUMN_MAP):
+        col = COLUMN_MAP[key]
         if col is None:
             continue
+
+        if key == "GiftBoxes":
+            write_gift_boxes(normalized["GiftBoxes"], col, target_row)
+            continue
+
         value = normalized[key]
 
-        if key in CHECKBOX_FIELDS:
-            write_checkbox_with_note(col, target_row, str(value))
+        if key == "IndoorFog":
+            write_checkbox(col, target_row, bool(str(value).strip()))
+            continue
+
+        if key == "MeteorShower":
+            write_checkbox_with_note(col, target_row, bool(str(value).strip()), str(value))
+            continue
+
+        if key in ("SIDType", "InfestationType"):
+            write_checkbox_with_note(col, target_row, bool(str(value).strip()), str(value))
             continue
 
         if key in ("ValueSold", "NewQuota") and value == 0:
             continue
 
-        if key == "EggValue" and value == 0:
+        if key == "EggValue" and value == "":
             write_to_cell("X", f"{col}{target_row}")
             continue
 
