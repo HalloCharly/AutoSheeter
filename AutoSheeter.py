@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import urllib.request
@@ -34,6 +35,8 @@ COLUMN_MAP = {
     "BeehiveAmount":        config.get("Columns", "BeehiveAmount"),
     "BeehiveValue":         config.get("Columns", "BeehiveValue"),
     "EggValue":             config.get("Columns", "EggValue"),
+    "KnifeInfo":            config.get("Columns", "KnifeInfo"),
+    "ShotgunInfo":          config.get("Columns", "ShotgunInfo"),
     "CollectedTotal":       config.get("Columns", "CollectedTotal"),
     "BottomLine":           config.get("Columns", "BottomLine"),
     "MissedItems":          config.get("Columns", "MissedItems"),
@@ -136,6 +139,14 @@ def strip_moon_number(name: str) -> str:
     return name
 
 
+def normalize_interior_name(name: str) -> str:
+    name = re.sub(r'flow', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+    name = re.sub(r'\d+', '', name)
+    name = re.sub(r' {2,}', ' ', name).strip()
+    return name
+
+
 def coerce_value(value):
     if isinstance(value, bool):
         return value
@@ -182,10 +193,11 @@ def normalize_players(raw_players: dict) -> list[dict]:
             status = "X"
 
         note_parts = []
-        if time_of_death:
-            note_parts.append(f"Time of Death: {time_of_death}")
-        if cause_of_death:
-            note_parts.append(f"Cause of Death: {cause_of_death}")
+        if status != "M":
+            if time_of_death:
+                note_parts.append(f"Time of Death: {time_of_death}")
+            if cause_of_death:
+                note_parts.append(f"Cause of Death: {cause_of_death}")
         note = "\n".join(note_parts)
 
         players.append({"status": status, "note": note})
@@ -238,11 +250,20 @@ def normalize_missed_items(raw_missed_items: list) -> dict:
     return {"total_value": count, "cell_value": cell_value, "note": note}
 
 
+def normalize_weapon_count(raw_info: dict) -> int:
+    if not raw_info:
+        return 0
+    available = raw_info.get("Available") or []
+    return len(available)
+
+
 def normalize_stats(stats):
     dungeon      = stats.get("DungeonInfo") or {}
     moon         = stats.get("MoonInfo") or {}
     bee_info     = stats.get("BeeInfo") or {}
     egg_info     = stats.get("EggInfo") or {}
+    knife_info   = stats.get("KnifeInfo") or {}
+    shotgun_info = stats.get("ShotgunInfo") or {}
     gift_boxes   = stats.get("GiftBoxes") or []
     missed_items = stats.get("MissedItems") or []
 
@@ -279,15 +300,20 @@ def normalize_stats(stats):
     gift_data   = normalize_gift_boxes(gift_boxes)
     missed_data = normalize_missed_items(missed_items)
 
+    interior_raw = strip_apostrophe(dungeon.get("Interior", ""))
+    interior     = normalize_interior_name(interior_raw)
+
     return {
         "NewQuota":              int(strip_apostrophe(stats.get("NewQuota", 0))),
         "MoonInfo_Name":         moon_name,
         "MoonInfo_Weather":      weather,
-        "DungeonInfo_Interior":  strip_apostrophe(dungeon.get("Interior", "")),
+        "DungeonInfo_Interior":  interior,
         "DungeonInfo_ItemCount": int(strip_apostrophe(dungeon.get("ItemCount", 0))),
         "BeehiveAmount":         beehive_amount,
         "BeehiveValue":          beehive_value,
         "EggValue":              egg_value_str,
+        "KnifeInfo":             normalize_weapon_count(knife_info),
+        "ShotgunInfo":           normalize_weapon_count(shotgun_info),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
         "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
         "MissedItems":           missed_data,
@@ -438,7 +464,7 @@ def update_sheet_from_stats(stats):
     target_row = get_next_empty_row()
     moon_name  = normalized["MoonInfo_Name"]
 
-    if "gordion" in moon_name.lower():
+    if "gordion" in moon_name.lower() or "galetry" in moon_name.lower():
         value_sold = normalized["ValueSold"]
         new_quota  = normalized["NewQuota"]
         if value_sold == 0 and new_quota == 0:
@@ -486,6 +512,10 @@ def update_sheet_from_stats(stats):
 
         if key in ("BeehiveAmount", "BeehiveValue") and value == "":
             write_to_cell("X", f"{col}{target_row}")
+            continue
+
+        if key in ("KnifeInfo", "ShotgunInfo") and value == 0:
+            write_to_cell(0, f"{col}{target_row}")
             continue
 
         write_to_cell(value, f"{col}{target_row}")
