@@ -18,38 +18,67 @@ if not os.path.exists(config_path):
 
 config.read(config_path)
 
-json_file_name = config.get("GoogleSheets", "json_file_name")
-SPREADSHEET_ID = config.get("GoogleSheets", "spreadsheet_id")
-target_sheet   = config.get("GoogleSheets", "target_sheet")
 
-START_ROW = config.getint("Sheet", "start_row")
+def cfg_get(section: str, key: str, fallback=None) -> str | None:
+    try:
+        value = config.get(section, key, fallback=fallback)
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        return None
+    if value is None or str(value).strip().lower() in ("", "none"):
+        return None
+    return str(value).strip()
 
-PLAYER_COLUMNS = [c.strip() for c in config.get("Columns", "Players").split(",") if c.strip()]
+
+def cfg_get_int(section: str, key: str, fallback=None) -> int | None:
+    raw = cfg_get(section, key)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        return fallback
+
+
+json_file_name = cfg_get("GoogleSheets", "json_file_name")
+SPREADSHEET_ID = cfg_get("GoogleSheets", "spreadsheet_id")
+target_sheet   = cfg_get("GoogleSheets", "target_sheet")
+
+START_ROW = cfg_get_int("Sheet", "start_row", fallback=2)
+
+raw_players_cfg = cfg_get("Columns", "Players")
+PLAYER_COLUMNS = [c.strip() for c in raw_players_cfg.split(",") if c.strip()] if raw_players_cfg else []
 
 COLUMN_MAP = {
-    "NewQuota":             config.get("Columns", "NewQuota"),
-    "MoonInfo_Name":        config.get("Columns", "MoonInfo_Name"),
-    "MoonInfo_Weather":     config.get("Columns", "MoonInfo_Weather"),
-    "DungeonInfo_Interior": config.get("Columns", "DungeonInfo_Interior"),
-    "DungeonInfo_ItemCount":config.get("Columns", "DungeonInfo_ItemCount"),
-    "BeehiveAmount":        config.get("Columns", "BeehiveAmount"),
-    "BeehiveValue":         config.get("Columns", "BeehiveValue"),
-    "EggValue":             config.get("Columns", "EggValue"),
-    "KnifeInfo":            config.get("Columns", "KnifeInfo"),
-    "ShotgunInfo":          config.get("Columns", "ShotgunInfo"),
-    "CollectedTotal":       config.get("Columns", "CollectedTotal"),
-    "BottomLine":           config.get("Columns", "BottomLine"),
-    "MissedItems":          config.get("Columns", "MissedItems"),
-    "ValueSold":            config.get("Columns", "ValueSold"),
-    "SIDType":              config.get("Columns", "SID"),
-    "InfestationType":      config.get("Columns", "Infestation"),
-    "IndoorFog":            config.get("Columns", "IndoorFog"),
-    "MeteorShower":         config.get("Columns", "MeteorShower"),
-    "GiftBoxes":            config.get("Columns", "GiftBoxes", fallback=None),
-    "Seed":                 config.get("Columns", "Seed"),
+    "NewQuota":             cfg_get("Columns", "NewQuota"),
+    "MoonInfo_Name":        cfg_get("Columns", "MoonInfo_Name"),
+    "MoonInfo_Weather":     cfg_get("Columns", "MoonInfo_Weather"),
+    "DungeonInfo_Interior": cfg_get("Columns", "DungeonInfo_Interior"),
+    "DungeonInfo_ItemCount":cfg_get("Columns", "DungeonInfo_ItemCount"),
+    "BeehiveAmount":        cfg_get("Columns", "BeehiveAmount"),
+    "BeehiveValue":         cfg_get("Columns", "BeehiveValue"),
+    "EggValue":             cfg_get("Columns", "EggValue"),
+    "KnifeInfo":            cfg_get("Columns", "KnifeInfo"),
+    "ShotgunInfo":          cfg_get("Columns", "ShotgunInfo"),
+    "CollectedTotal":       cfg_get("Columns", "CollectedTotal"),
+    "BottomLine":           cfg_get("Columns", "BottomLine"),
+    "MissedItems":          cfg_get("Columns", "MissedItems"),
+    "ValueSold":            cfg_get("Columns", "ValueSold"),
+    "SIDType":              cfg_get("Columns", "SID"),
+    "InfestationType":      cfg_get("Columns", "Infestation"),
+    "IndoorFog":            cfg_get("Columns", "IndoorFog"),
+    "MeteorShower":         cfg_get("Columns", "MeteorShower"),
+    "GiftBoxes":            cfg_get("Columns", "GiftBoxes"),
+    "Seed":                 cfg_get("Columns", "Seed"),
 }
 
 CHECKBOX_FIELDS = {"SIDType", "InfestationType", "IndoorFog", "MeteorShower"}
+
+if not json_file_name:
+    raise ValueError("config.ini: [GoogleSheets] json_file_name is required and cannot be None/blank.")
+if not SPREADSHEET_ID:
+    raise ValueError("config.ini: [GoogleSheets] spreadsheet_id is required and cannot be None/blank.")
+if not target_sheet:
+    raise ValueError("config.ini: [GoogleSheets] target_sheet is required and cannot be None/blank.")
 
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "extra", json_file_name)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -57,6 +86,12 @@ creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPE
 service = build("sheets", "v4", credentials=creds)
 
 print(f"Target sheet: '{target_sheet}'")
+
+disabled = [k for k, v in COLUMN_MAP.items() if v is None]
+if disabled:
+    print(f"Columns disabled (None/blank in config): {', '.join(disabled)}")
+if not PLAYER_COLUMNS:
+    print("Player columns disabled (None/blank in config).")
 
 STATS_URL = os.getenv("STATS_URL", "http://localhost:2145/")
 FALLBACK_STATS_FILE = os.path.join(
@@ -338,13 +373,29 @@ def get_sheet_id(sheet_name: str) -> int:
 
 
 def get_next_empty_row():
-    col = COLUMN_MAP["MoonInfo_Name"]
-    result = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{target_sheet}!{col}{START_ROW}:{col}1000"
-    ).execute()
-    rows = result.get("values", [])
-    return START_ROW + len(rows)
+    ANCHOR_KEYS = ["MoonInfo_Name", "MoonInfo_Weather", "DungeonInfo_Interior",
+                   "DungeonInfo_ItemCount", "ValueSold", "BottomLine"]
+
+    anchor_cols = [COLUMN_MAP[k] for k in ANCHOR_KEYS if COLUMN_MAP.get(k)]
+    if not anchor_cols:
+        raise ValueError("None of the anchor columns are configured.")
+
+    occupied = set()
+    for col in anchor_cols:
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{target_sheet}!{col}{START_ROW}:{col}1000",
+            majorDimension="COLUMNS",
+        ).execute()
+        col_values = result.get("values", [[]])[0] if result.get("values") else []
+        for rel_idx, cell in enumerate(col_values):
+            if str(cell).strip():
+                occupied.add(START_ROW + rel_idx)
+
+    max_row = max(occupied, default=START_ROW - 1)
+    for row in range(START_ROW, max_row + 2):
+        if row not in occupied:
+            return row
 
 
 def write_to_cell(value, cell):
@@ -426,6 +477,8 @@ def write_checkbox_with_note(col: str, row: int, checked: bool, note: str):
 
 
 def write_players(players: list[dict], row: int):
+    if not PLAYER_COLUMNS:
+        return
     if len(players) > len(PLAYER_COLUMNS):
         print(f"⚠ More players ({len(players)}) than configured columns ({len(PLAYER_COLUMNS)}); extras ignored")
     sorted_player_cols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
@@ -469,9 +522,9 @@ def update_sheet_from_stats(stats):
         new_quota  = normalized["NewQuota"]
         if value_sold == 0 and new_quota == 0:
             return
-        if value_sold != 0:
+        if value_sold != 0 and COLUMN_MAP.get("ValueSold"):
             write_to_cell(value_sold, f'{COLUMN_MAP["ValueSold"]}{target_row - 3}')
-        if new_quota != 0:
+        if new_quota != 0 and COLUMN_MAP.get("NewQuota"):
             write_to_cell(new_quota, f'{COLUMN_MAP["NewQuota"]}{target_row}')
         print(f"Updated {target_sheet} (Gordion: sold={value_sold}, quota={new_quota})")
         return
@@ -479,7 +532,7 @@ def update_sheet_from_stats(stats):
     for key in sorted_column_map_keys(COLUMN_MAP):
         col = COLUMN_MAP[key]
         if col is None:
-            continue
+            continue  # Field disabled in config — skip entirely.
 
         if key == "GiftBoxes":
             write_gift_boxes(normalized["GiftBoxes"], col, target_row)
