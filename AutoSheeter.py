@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 config = configparser.ConfigParser()
-config_path = os.path.join(BASE_DIR, "config_test.ini")
+config_path = os.path.join(BASE_DIR, "config.ini")
 
 if not os.path.exists(config_path):
     raise FileNotFoundError(f"config.ini not found at {config_path}")
