@@ -3,15 +3,13 @@ import re
 import json
 import time
 import urllib.request
-import urllib.error
 import configparser
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 config = configparser.ConfigParser()
-config_path = os.path.join(BASE_DIR, "config.ini")
+config_path = os.path.join(BASE_DIR, "config_test.ini")
 
 if not os.path.exists(config_path):
     raise FileNotFoundError(f"config.ini not found at {config_path}")
@@ -19,7 +17,7 @@ if not os.path.exists(config_path):
 config.read(config_path)
 
 
-def cfg_get(section: str, key: str, fallback=None) -> str | None:
+def cfg_get(section, key, fallback=None):
     try:
         value = config.get(section, key, fallback=fallback)
     except (configparser.NoSectionError, configparser.NoOptionError):
@@ -29,7 +27,7 @@ def cfg_get(section: str, key: str, fallback=None) -> str | None:
     return str(value).strip()
 
 
-def cfg_get_int(section: str, key: str, fallback=None) -> int | None:
+def cfg_get_int(section, key, fallback=None):
     raw = cfg_get(section, key)
     if raw is None:
         return fallback
@@ -42,67 +40,62 @@ def cfg_get_int(section: str, key: str, fallback=None) -> int | None:
 json_file_name = cfg_get("GoogleSheets", "json_file_name")
 SPREADSHEET_ID = cfg_get("GoogleSheets", "spreadsheet_id")
 target_sheet   = cfg_get("GoogleSheets", "target_sheet")
-
-START_ROW = cfg_get_int("Sheet", "start_row", fallback=2)
-
-raw_players_cfg = cfg_get("Columns", "Players")
-PLAYER_COLUMNS = [c.strip() for c in raw_players_cfg.split(",") if c.strip()] if raw_players_cfg else []
-
-COLUMN_MAP = {
-    "NewQuota":             cfg_get("Columns", "NewQuota"),
-    "MoonInfo_Name":        cfg_get("Columns", "MoonInfo_Name"),
-    "MoonInfo_Weather":     cfg_get("Columns", "MoonInfo_Weather"),
-    "DungeonInfo_Interior": cfg_get("Columns", "DungeonInfo_Interior"),
-    "DungeonInfo_ItemCount":cfg_get("Columns", "DungeonInfo_ItemCount"),
-    "BeehiveAmount":        cfg_get("Columns", "BeehiveAmount"),
-    "BeehiveValue":         cfg_get("Columns", "BeehiveValue"),
-    "EggValue":             cfg_get("Columns", "EggValue"),
-    "KnifeInfo":            cfg_get("Columns", "KnifeInfo"),
-    "ShotgunInfo":          cfg_get("Columns", "ShotgunInfo"),
-    "CollectedTotal":       cfg_get("Columns", "CollectedTotal"),
-    "BottomLine":           cfg_get("Columns", "BottomLine"),
-    "MissedItems":          cfg_get("Columns", "MissedItems"),
-    "ValueSold":            cfg_get("Columns", "ValueSold"),
-    "SIDType":              cfg_get("Columns", "SID"),
-    "InfestationType":      cfg_get("Columns", "Infestation"),
-    "IndoorFog":            cfg_get("Columns", "IndoorFog"),
-    "MeteorShower":         cfg_get("Columns", "MeteorShower"),
-    "GiftBoxes":            cfg_get("Columns", "GiftBoxes"),
-    "Seed":                 cfg_get("Columns", "Seed"),
-}
-
-CHECKBOX_FIELDS = {"SIDType", "InfestationType", "IndoorFog", "MeteorShower"}
+START_ROW      = cfg_get_int("Sheet", "start_row", fallback=2)
 
 if not json_file_name:
-    raise ValueError("config.ini: [GoogleSheets] json_file_name is required and cannot be None/blank.")
+    raise ValueError("config.ini: [GoogleSheets] json_file_name is required.")
 if not SPREADSHEET_ID:
-    raise ValueError("config.ini: [GoogleSheets] spreadsheet_id is required and cannot be None/blank.")
+    raise ValueError("config.ini: [GoogleSheets] spreadsheet_id is required.")
 if not target_sheet:
-    raise ValueError("config.ini: [GoogleSheets] target_sheet is required and cannot be None/blank.")
+    raise ValueError("config.ini: [GoogleSheets] target_sheet is required.")
+
+raw_players_cfg = cfg_get("Columns", "Players")
+PLAYER_COLUMNS  = [c.strip() for c in raw_players_cfg.split(",") if c.strip()] if raw_players_cfg else []
+
+COLUMN_MAP = {
+    "NewQuota":              cfg_get("Columns", "NewQuota"),
+    "MoonInfo_Name":         cfg_get("Columns", "MoonInfo_Name"),
+    "MoonInfo_Weather":      cfg_get("Columns", "MoonInfo_Weather"),
+    "DungeonInfo_Interior":  cfg_get("Columns", "DungeonInfo_Interior"),
+    "DungeonInfo_ItemCount": cfg_get("Columns", "DungeonInfo_ItemCount"),
+    "BeehiveAmount":         cfg_get("Columns", "BeehiveAmount"),
+    "BeehiveValue":          cfg_get("Columns", "BeehiveValue"),
+    "BeehiveCollected":      cfg_get("Columns", "BeehiveCollected"),
+    "EggValue":              cfg_get("Columns", "EggValue"),
+    "KnifeInfo":             cfg_get("Columns", "KnifeInfo"),
+    "ShotgunInfo":           cfg_get("Columns", "ShotgunInfo"),
+    "CollectedTotal":        cfg_get("Columns", "CollectedTotal"),
+    "BottomLine":            cfg_get("Columns", "BottomLine"),
+    "Scan":                  cfg_get("Columns", "Scan"),
+    "OutsideItemsValue":     cfg_get("Columns", "OutsideItemsValue"),
+    "ValueSold":             cfg_get("Columns", "ValueSold"),
+    "SIDType":               cfg_get("Columns", "SID"),
+    "InfestationType":       cfg_get("Columns", "Infestation"),
+    "IndoorFog":             cfg_get("Columns", "IndoorFog"),
+    "MeteorShower":          cfg_get("Columns", "MeteorShower"),
+    "GiftBoxes":             cfg_get("Columns", "GiftBoxes"),
+    "Seed":                  cfg_get("Columns", "Seed"),
+}
 
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "extra", json_file_name)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+creds   = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
 
-print(f"Target sheet: '{target_sheet}'")
+_sheet_id_cache = {}
 
+STATS_URL           = os.getenv("STATS_URL", "http://localhost:2145/")
+FALLBACK_STATS_FILE = os.path.join(os.path.expanduser("~"), "Documents", "LethalCompanyStats", "stats.json")
+
+print(f"Target sheet: '{target_sheet}'")
 disabled = [k for k, v in COLUMN_MAP.items() if v is None]
 if disabled:
-    print(f"Columns disabled (None/blank in config): {', '.join(disabled)}")
+    print(f"Columns disabled: {', '.join(disabled)}")
 if not PLAYER_COLUMNS:
-    print("Player columns disabled (None/blank in config).")
-
-STATS_URL = os.getenv("STATS_URL", "http://localhost:2145/")
-FALLBACK_STATS_FILE = os.path.join(
-    os.path.expanduser("~"),
-    "Documents",
-    "LethalCompanyStats",
-    "stats.json"
-)
+    print("Player columns disabled.")
 
 
-def col_letter_to_index(col: str) -> int:
+def col_letter_to_index(col):
     col = col.upper()
     index = 0
     for ch in col:
@@ -110,186 +103,186 @@ def col_letter_to_index(col: str) -> int:
     return index - 1
 
 
-def sorted_column_map_keys(column_map: dict) -> list[str]:
-    def sort_key(k):
-        col = column_map[k]
-        if col is None:
-            return (10 ** 9,)
-        return (col_letter_to_index(col),)
-    return sorted(column_map.keys(), key=sort_key)
+def sorted_column_map_keys(column_map):
+    return sorted(column_map, key=lambda k: col_letter_to_index(column_map[k]) if column_map[k] else 10**9)
+
+
+def get_sheet_id(sheet_name):
+    if sheet_name not in _sheet_id_cache:
+        meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        for sheet in meta.get("sheets", []):
+            props = sheet.get("properties", {})
+            _sheet_id_cache[props["title"]] = props["sheetId"]
+    if sheet_name not in _sheet_id_cache:
+        raise ValueError(f"Sheet '{sheet_name}' not found in spreadsheet")
+    return _sheet_id_cache[sheet_name]
 
 
 def parse_sse_payload(raw_text):
-    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-    data_lines = []
-    for line in lines:
-        if line.startswith("data:"):
-            data_lines.append(line[len("data:"):].strip())
+    data_lines = [l[5:].strip() for l in raw_text.splitlines() if l.strip().startswith("data:")]
     return "\n".join(data_lines)
 
 
-def get_stats_from_http():
-    try:
-        with urllib.request.urlopen(STATS_URL, timeout=5) as response:
-            raw = response.read().decode("utf-8")
-        raw = raw.lstrip("\ufeff")
-        if not raw.strip():
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            payload = parse_sse_payload(raw)
-            if not payload.strip():
-                return None
-            return json.loads(payload)
-    except Exception:
-        return None
-
-
-def get_stats_from_file():
-    if not os.path.exists(FALLBACK_STATS_FILE):
-        return None
-    try:
-        with open(FALLBACK_STATS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
 def get_stats():
-    stats = get_stats_from_http()
-    if stats is not None:
-        return stats
-    return get_stats_from_file()
+    try:
+        with urllib.request.urlopen(STATS_URL, timeout=5) as r:
+            raw = r.read().decode("utf-8").lstrip("\ufeff")
+        if raw.strip():
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                payload = parse_sse_payload(raw)
+                if payload.strip():
+                    return json.loads(payload)
+    except Exception:
+        pass
+    if os.path.exists(FALLBACK_STATS_FILE):
+        try:
+            with open(FALLBACK_STATS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
 
 
 def strip_apostrophe(value):
     return str(value).lstrip("'")
 
 
-def strip_moon_number(name: str) -> str:
-    parts = name.split(" ", 1)
-    if len(parts) == 2 and parts[0].rstrip("-").isdigit():
-        return parts[1]
-    return name
-
-
-def normalize_interior_name(name: str) -> str:
-    name = re.sub(r'flow', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
-    name = re.sub(r'\d+', '', name)
-    name = re.sub(r' {2,}', ' ', name).strip()
-    return name
-
-
 def coerce_value(value):
     if isinstance(value, bool):
         return value
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        pass
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        pass
+    for cast in (int, float):
+        try:
+            return cast(value)
+        except (ValueError, TypeError):
+            pass
     return value
 
 
 def make_cell_value(value):
     if isinstance(value, bool):
         return {"boolValue": value}
-    try:
-        return {"numberValue": int(value)}
-    except (ValueError, TypeError):
-        pass
-    try:
-        return {"numberValue": float(value)}
-    except (ValueError, TypeError):
-        pass
+    for cast in (int, float):
+        try:
+            return {"numberValue": cast(value)}
+        except (ValueError, TypeError):
+            pass
     return {"stringValue": str(value)}
 
 
-def normalize_players(raw_players: dict) -> list[dict]:
-    players = []
-    for steam_id, data in raw_players.items():
-        alive          = data.get("Alive", False)
-        disconnected   = data.get("Disconnected", False)
-        time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
-        cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
+def build_update_request(sheet_id, col, row, user_entered_value, note=None):
+    ci = col_letter_to_index(col)
+    ri = row - 1
+    row_val = {"userEnteredValue": user_entered_value}
+    fields  = "userEnteredValue"
+    if note is not None:
+        row_val["note"] = note
+        fields += ",note"
+    return {"updateCells": {
+        "range":  {"sheetId": sheet_id, "startRowIndex": ri, "endRowIndex": ri + 1,
+                   "startColumnIndex": ci, "endColumnIndex": ci + 1},
+        "rows":   [{"values": [row_val]}],
+        "fields": fields,
+    }}
 
-        if disconnected:
+
+def normalize_players(raw_players):
+    players = []
+    for data in raw_players.values():
+        cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
+        time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
+
+        if data.get("Disconnected"):
             status = "DC"
         elif cause_of_death.lower() in ("abandonment", "abandoned"):
             status = "M"
-        elif alive:
+        elif data.get("Alive"):
             status = "S"
         else:
             status = "X"
 
-        note_parts = []
+        note = ""
         if status != "M":
+            parts = []
             if time_of_death:
-                note_parts.append(f"Time of Death: {time_of_death}")
+                parts.append(f"Time of Death: {time_of_death}")
             if cause_of_death:
-                note_parts.append(f"Cause of Death: {cause_of_death}")
-        note = "\n".join(note_parts)
+                parts.append(f"Cause of Death: {cause_of_death}")
+            note = "\n".join(parts)
 
         players.append({"status": status, "note": note})
-
     return players
 
 
-def normalize_gift_boxes(raw_gift_boxes: list) -> dict:
-    if not raw_gift_boxes:
-        return {"amount": 0, "total_value": 0, "cell_value": "", "note": ""}
-
-    collected = [box for box in raw_gift_boxes if box.get("Collected", False)]
-
-    amount = len(collected)
-    total_net = sum(
-        int(box.get("GiftValue", 0)) - int(box.get("ScrapValue", 0))
-        for box in collected
+def normalize_gift_boxes(raw):
+    if not raw:
+        return {"collected_any": False, "cell_value": "", "note": ""}
+    collected = [b for b in raw if b.get("Collected")]
+    missed    = [b for b in raw if not b.get("Collected")]
+    if collected:
+        net        = sum(int(b.get("NewScrapValue", 0)) - int(b.get("GiftScrapValue", 0)) for b in collected)
+        cell_value = f"+{net}" if net >= 0 else str(net)
+    else:
+        cell_value = ""
+    note = "\n".join(
+        f"Gift {i}: GiftValue: {int(b.get('NewScrapValue', 0))} ; ItemValue: {int(b.get('GiftScrapValue', 0))}"
+        for i, b in enumerate(missed, 1)
     )
-
-    sign = "+" if total_net >= 0 else ""
-    cell_value = f"{amount}|{sign}{total_net}" if collected else ""
-
-    note_lines = []
-    for i, box in enumerate(raw_gift_boxes, start=1):
-        gift  = int(box.get("GiftValue", 0))
-        scrap = int(box.get("ScrapValue", 0))
-        was_collected = box.get("Collected", False)
-        note_lines.append(f"Box {i}: GiftValue={gift}, ScrapValue={scrap}, Collected={was_collected}")
-    note = "\n".join(note_lines)
-
-    return {"amount": amount, "total_value": total_net, "cell_value": cell_value, "note": note}
+    return {"collected_any": bool(collected), "cell_value": cell_value, "note": note}
 
 
-def normalize_missed_items(raw_missed_items: list) -> dict:
-    if not raw_missed_items:
-        return {"total_value": 0, "cell_value": "", "note": ""}
-
-    uncollected = [item for item in raw_missed_items if not item.get("CollectedOnPreviousDay", False)]
-
-    count = len(uncollected)
-    cell_value = str(count) if uncollected else ""
-
-    note_lines = []
-    for item in uncollected:
-        name  = item.get("ItemType", "Unknown")
-        value = int(item.get("Value", 0))
-        note_lines.append(f"{name}: {value}")
-    note = "\n".join(note_lines)
-
-    return {"total_value": count, "cell_value": cell_value, "note": note}
+def normalize_missed_items(raw):
+    if not raw:
+        return {"cell_value": "", "note": ""}
+    uncollected = [i for i in raw if not i.get("CollectedOnPreviousDay")]
+    if not uncollected:
+        return {"cell_value": "", "note": ""}
+    note = "\n".join(f"{i.get('ItemType', 'Unknown')}: {int(i.get('Value', 0))}" for i in uncollected)
+    return {"cell_value": str(len(uncollected)), "note": note}
 
 
-def normalize_weapon_count(raw_info: dict) -> int:
+
+def normalize_weapon_count(raw_info):
     if not raw_info:
-        return 0
-    available = raw_info.get("Available") or []
-    return len(available)
+        return "0|0"
+    return f"{len(raw_info.get('Collected') or [])}|{len(raw_info.get('Available') or [])}"
+
+
+def normalize_beehive_collected(bee_info, new_bee_format):
+    collected = [int(v) for v in (bee_info.get("Collected") or [])]
+    if not collected:
+        return ""
+    if new_bee_format:
+        return f"{sum(1 for v in collected if v < 100)}|{sum(1 for v in collected if v >= 100)}"
+    return str(len(collected))
+
+
+def normalize_outside_items_value(bee_info, egg_info):
+    bee_avail = [int(v) for v in (bee_info.get("Available") or [])]
+    bee_coll  = [int(v) for v in (bee_info.get("Collected") or [])]
+    egg_avail = [int(v) for v in (egg_info.get("Available") or [])]
+    egg_coll  = [int(v) for v in (egg_info.get("Collected") or [])]
+
+    total            = sum(bee_coll) + sum(egg_coll)
+    bee_missed_small = sum(1 for v in bee_avail if v < 100)  - sum(1 for v in bee_coll if v < 100)
+    bee_missed_large = sum(1 for v in bee_avail if v >= 100) - sum(1 for v in bee_coll if v >= 100)
+
+    remaining_eggs = sorted(egg_avail)
+    for v in sorted(egg_coll):
+        if v in remaining_eggs:
+            remaining_eggs.remove(v)
+
+    note_parts = []
+    if bee_missed_small > 0 or bee_missed_large > 0:
+        note_parts.append(f"Bee ({bee_missed_small}|{bee_missed_large})")
+    if remaining_eggs:
+        note_parts.append(f"Egg ({', '.join(str(v) for v in remaining_eggs)})")
+
+    return {
+        "cell_value": str(total) if total > 0 else "X",
+        "note": ("Missing: " + " ".join(note_parts)) if note_parts else "",
+    }
 
 
 def normalize_stats(stats):
@@ -297,46 +290,45 @@ def normalize_stats(stats):
     moon         = stats.get("MoonInfo") or {}
     bee_info     = stats.get("BeeInfo") or {}
     egg_info     = stats.get("EggInfo") or {}
-    knife_info   = stats.get("KnifeInfo") or {}
-    shotgun_info = stats.get("ShotgunInfo") or {}
-    gift_boxes   = stats.get("GiftBoxes") or []
     missed_items = stats.get("MissedItems") or []
 
-    bee_available = [int(v) for v in (bee_info.get("Available") or [])]
-    egg_available = [int(v) for v in (egg_info.get("Available") or [])]
+    bee_avail = [int(v) for v in (bee_info.get("Available") or [])]
+    egg_avail = [int(v) for v in (egg_info.get("Available") or [])]
 
-    raw_players = stats.get("Players") or {}
-    if not isinstance(raw_players, dict):
-        raw_players = {}
-
-    moon_name = strip_moon_number(strip_apostrophe(moon.get("Name", "")))
-    weather   = strip_apostrophe(moon.get("Weather", ""))
+    weather = strip_apostrophe(moon.get("Weather", ""))
     if weather == "Mild":
         weather = "Clear"
 
-    indoor_fog_val = "true" if stats.get("IndoorFog", False) else ""
+    moon_name = strip_apostrophe(moon.get("Name", ""))
+    parts = moon_name.split(" ", 1)
+    if len(parts) == 2 and parts[0].rstrip("-").isdigit():
+        moon_name = parts[1]
 
-    meteor_time = strip_apostrophe(stats.get("MeteorShowerTime", "")).strip()
-    meteor_val  = meteor_time if meteor_time else ""
+    interior = strip_apostrophe(dungeon.get("Interior", ""))
+    interior = re.sub(r'flow', '', interior, flags=re.IGNORECASE)
+    interior = re.sub(r'([a-z])([A-Z])', r'\1 \2', interior)
+    interior = re.sub(r'\d+', '', interior)
+    interior = re.sub(r' {2,}', ' ', interior).strip()
 
-    bee_small = [v for v in bee_available if v < 100]
-    bee_large = [v for v in bee_available if v >= 100]
-    if bee_available:
-        small_val = bee_small[0] if bee_small else 0
-        large_val = bee_large[0] if bee_large else 0
-        beehive_amount = f"{len(bee_small)}|{len(bee_large)}"
-        beehive_value  = f"{small_val}|{large_val}"
+    version        = int(stats.get("Version", 0))
+    new_bee_format = version >= 70
+
+    if bee_avail:
+        if new_bee_format:
+            bee_small      = [v for v in bee_avail if v < 100]
+            bee_large      = [v for v in bee_avail if v >= 100]
+            beehive_amount = f"{len(bee_small)}|{len(bee_large)}"
+            beehive_value  = f"{bee_small[0] if bee_small else 0}|{bee_large[0] if bee_large else 0}"
+        else:
+            beehive_amount = str(len(bee_avail))
+            beehive_value  = str(bee_avail[0])
     else:
         beehive_amount = ""
         beehive_value  = ""
 
-    egg_value_str = "|".join(str(v) for v in sorted(egg_available)) if egg_available else ""
-
-    gift_data   = normalize_gift_boxes(gift_boxes)
-    missed_data = normalize_missed_items(missed_items)
-
-    interior_raw = strip_apostrophe(dungeon.get("Interior", ""))
-    interior     = normalize_interior_name(interior_raw)
+    raw_players = stats.get("Players") or {}
+    if not isinstance(raw_players, dict):
+        raw_players = {}
 
     return {
         "NewQuota":              int(strip_apostrophe(stats.get("NewQuota", 0))),
@@ -346,36 +338,28 @@ def normalize_stats(stats):
         "DungeonInfo_ItemCount": int(strip_apostrophe(dungeon.get("ItemCount", 0))),
         "BeehiveAmount":         beehive_amount,
         "BeehiveValue":          beehive_value,
-        "EggValue":              egg_value_str,
-        "KnifeInfo":             normalize_weapon_count(knife_info),
-        "ShotgunInfo":           normalize_weapon_count(shotgun_info),
+        "BeehiveCollected":      normalize_beehive_collected(bee_info, new_bee_format),
+        "EggValue":              "|".join(str(v) for v in sorted(egg_avail)) if egg_avail else "",
+        "KnifeInfo":             normalize_weapon_count(stats.get("KnifeInfo")),
+        "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo")),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
         "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
-        "MissedItems":           missed_data,
+        "Scan":                  normalize_missed_items(missed_items),
+        "OutsideItemsValue":     normalize_outside_items_value(bee_info, egg_info),
         "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
         "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
         "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
-        "IndoorFog":             indoor_fog_val,
-        "MeteorShower":          meteor_val,
-        "GiftBoxes":             gift_data,
+        "IndoorFog":             stats.get("IndoorFog", False),
+        "MeteorShower":          strip_apostrophe(stats.get("MeteorShowerTime", "")).strip(),
+        "GiftBoxes":             normalize_gift_boxes(stats.get("GiftBoxesOpened") or []),
         "Seed":                  strip_apostrophe(stats.get("Seed", "")),
         "Players":               normalize_players(raw_players),
     }
 
 
-def get_sheet_id(sheet_name: str) -> int:
-    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-    for sheet in meta.get("sheets", []):
-        props = sheet.get("properties", {})
-        if props.get("title") == sheet_name:
-            return props["sheetId"]
-    raise ValueError(f"Sheet '{sheet_name}' not found in spreadsheet")
-
-
 def get_next_empty_row():
     ANCHOR_KEYS = ["MoonInfo_Name", "MoonInfo_Weather", "DungeonInfo_Interior",
                    "DungeonInfo_ItemCount", "ValueSold", "BottomLine"]
-
     anchor_cols = [COLUMN_MAP[k] for k in ANCHOR_KEYS if COLUMN_MAP.get(k)]
     if not anchor_cols:
         raise ValueError("None of the anchor columns are configured.")
@@ -387,7 +371,7 @@ def get_next_empty_row():
             range=f"{target_sheet}!{col}{START_ROW}:{col}1000",
             majorDimension="COLUMNS",
         ).execute()
-        col_values = result.get("values", [[]])[0] if result.get("values") else []
+        col_values = (result.get("values") or [[]])[0]
         for rel_idx, cell in enumerate(col_values):
             if str(cell).strip():
                 occupied.add(START_ROW + rel_idx)
@@ -398,124 +382,15 @@ def get_next_empty_row():
             return row
 
 
-def write_to_cell(value, cell):
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{target_sheet}!{cell}",
-        valueInputOption="RAW",
-        body={"values": [[coerce_value(value)]]}
-    ).execute()
-
-
-def write_cell_with_note(col: str, row: int, value: str, note: str):
-    sheet_id  = get_sheet_id(target_sheet)
-    col_index = col_letter_to_index(col)
-    row_index = row - 1
-
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SPREADSHEET_ID,
-        body={"requests": [{
-            "updateCells": {
-                "range": {
-                    "sheetId":          sheet_id,
-                    "startRowIndex":    row_index,
-                    "endRowIndex":      row_index + 1,
-                    "startColumnIndex": col_index,
-                    "endColumnIndex":   col_index + 1,
-                },
-                "rows": [{"values": [{"userEnteredValue": make_cell_value(value), "note": note}]}],
-                "fields": "userEnteredValue,note",
-            }
-        }]}
-    ).execute()
-
-
-def write_checkbox(col: str, row: int, checked: bool):
-    sheet_id  = get_sheet_id(target_sheet)
-    col_index = col_letter_to_index(col)
-    row_index = row - 1
-
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SPREADSHEET_ID,
-        body={"requests": [{
-            "updateCells": {
-                "range": {
-                    "sheetId":          sheet_id,
-                    "startRowIndex":    row_index,
-                    "endRowIndex":      row_index + 1,
-                    "startColumnIndex": col_index,
-                    "endColumnIndex":   col_index + 1,
-                },
-                "rows": [{"values": [{"userEnteredValue": {"boolValue": checked}}]}],
-                "fields": "userEnteredValue",
-            }
-        }]}
-    ).execute()
-
-
-def write_checkbox_with_note(col: str, row: int, checked: bool, note: str):
-    sheet_id  = get_sheet_id(target_sheet)
-    col_index = col_letter_to_index(col)
-    row_index = row - 1
-
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=SPREADSHEET_ID,
-        body={"requests": [{
-            "updateCells": {
-                "range": {
-                    "sheetId":          sheet_id,
-                    "startRowIndex":    row_index,
-                    "endRowIndex":      row_index + 1,
-                    "startColumnIndex": col_index,
-                    "endColumnIndex":   col_index + 1,
-                },
-                "rows": [{"values": [{"userEnteredValue": {"boolValue": checked}, "note": note if checked else ""}]}],
-                "fields": "userEnteredValue,note",
-            }
-        }]}
-    ).execute()
-
-
-def write_players(players: list[dict], row: int):
-    if not PLAYER_COLUMNS:
-        return
-    if len(players) > len(PLAYER_COLUMNS):
-        print(f"⚠ More players ({len(players)}) than configured columns ({len(PLAYER_COLUMNS)}); extras ignored")
-    sorted_player_cols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
-    for i, col in enumerate(sorted_player_cols):
-        if i >= len(players):
-            break
-        player = players[i]
-        if player["note"]:
-            write_cell_with_note(col, row, player["status"], player["note"])
-        else:
-            write_to_cell(player["status"], f"{col}{row}")
-
-
-def write_gift_boxes(gift_data: dict, col: str, row: int):
-    if not gift_data["note"]:
-        write_to_cell("X", f"{col}{row}")
-        return
-    if gift_data["cell_value"]:
-        write_cell_with_note(col, row, gift_data["cell_value"], gift_data["note"])
-    else:
-        write_cell_with_note(col, row, "X", gift_data["note"])
-
-
-def write_missed_items(missed_data: dict, col: str, row: int):
-    if not missed_data["note"]:
-        write_to_cell("X", f"{col}{row}")
-        return
-    if missed_data["cell_value"]:
-        write_cell_with_note(col, row, missed_data["cell_value"], missed_data["note"])
-    else:
-        write_cell_with_note(col, row, "X", missed_data["note"])
-
-
 def update_sheet_from_stats(stats):
     normalized = normalize_stats(stats)
     target_row = get_next_empty_row()
     moon_name  = normalized["MoonInfo_Name"]
+    sheet_id   = get_sheet_id(target_sheet)
+    requests   = []
+
+    def queue(col, uev, note=None):
+        requests.append(build_update_request(sheet_id, col, target_row, uev, note))
 
     if "gordion" in moon_name.lower() or "galetry" in moon_name.lower():
         value_sold = normalized["ValueSold"]
@@ -523,57 +398,66 @@ def update_sheet_from_stats(stats):
         if value_sold == 0 and new_quota == 0:
             return
         if value_sold != 0 and COLUMN_MAP.get("ValueSold"):
-            write_to_cell(value_sold, f'{COLUMN_MAP["ValueSold"]}{target_row - 3}')
+            requests.append(build_update_request(sheet_id, COLUMN_MAP["ValueSold"], target_row - 3, make_cell_value(value_sold)))
         if new_quota != 0 and COLUMN_MAP.get("NewQuota"):
-            write_to_cell(new_quota, f'{COLUMN_MAP["NewQuota"]}{target_row}')
+            requests.append(build_update_request(sheet_id, COLUMN_MAP["NewQuota"], target_row, make_cell_value(new_quota)))
+        service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": requests}).execute()
         print(f"Updated {target_sheet} (Gordion: sold={value_sold}, quota={new_quota})")
         return
 
     for key in sorted_column_map_keys(COLUMN_MAP):
         col = COLUMN_MAP[key]
         if col is None:
-            continue  # Field disabled in config — skip entirely.
-
-        if key == "GiftBoxes":
-            write_gift_boxes(normalized["GiftBoxes"], col, target_row)
             continue
 
-        if key == "MissedItems":
-            write_missed_items(normalized["MissedItems"], col, target_row)
+        if key == "GiftBoxes":
+            gift = normalized["GiftBoxes"]
+            queue(col, make_cell_value(gift["cell_value"] if gift["collected_any"] else "X"), gift["note"] or None)
+            continue
+
+        if key == "Scan":
+            missed = normalized["Scan"]
+            queue(col, make_cell_value(missed["cell_value"] or "X"), missed["note"] or None)
+            continue
+
+        if key == "OutsideItemsValue":
+            outside = normalized["OutsideItemsValue"]
+            queue(col, make_cell_value(outside["cell_value"]), outside["note"] or None)
+            continue
+
+        if key == "IndoorFog":
+            queue(col, {"boolValue": bool(normalized["IndoorFog"])})
+            continue
+
+        if key in ("MeteorShower", "SIDType", "InfestationType"):
+            val     = normalized[key]
+            checked = bool(str(val).strip())
+            queue(col, {"boolValue": checked}, str(val) if checked else None)
             continue
 
         value = normalized[key]
 
-        if key == "IndoorFog":
-            write_checkbox(col, target_row, bool(str(value).strip()))
-            continue
-
-        if key == "MeteorShower":
-            write_checkbox_with_note(col, target_row, bool(str(value).strip()), str(value))
-            continue
-
-        if key in ("SIDType", "InfestationType"):
-            write_checkbox_with_note(col, target_row, bool(str(value).strip()), str(value))
-            continue
-
         if key in ("ValueSold", "NewQuota") and value == 0:
             continue
 
-        if key == "EggValue" and value == "":
-            write_to_cell("X", f"{col}{target_row}")
+        if key in ("EggValue", "BeehiveAmount", "BeehiveValue", "BeehiveCollected") and value == "":
+            queue(col, make_cell_value("X"))
             continue
 
-        if key in ("BeehiveAmount", "BeehiveValue") and value == "":
-            write_to_cell("X", f"{col}{target_row}")
-            continue
+        queue(col, make_cell_value(coerce_value(value)))
 
-        if key in ("KnifeInfo", "ShotgunInfo") and value == 0:
-            write_to_cell(0, f"{col}{target_row}")
-            continue
+    if PLAYER_COLUMNS:
+        players = normalized["Players"]
+        if len(players) > len(PLAYER_COLUMNS):
+            print(f"⚠ More players ({len(players)}) than columns ({len(PLAYER_COLUMNS)}); extras ignored")
+        for i, pcol in enumerate(sorted(PLAYER_COLUMNS, key=col_letter_to_index)):
+            if i >= len(players):
+                break
+            p = players[i]
+            requests.append(build_update_request(sheet_id, pcol, target_row, make_cell_value(p["status"]), p["note"] or None))
 
-        write_to_cell(value, f"{col}{target_row}")
-
-    write_players(normalized["Players"], target_row)
+    if requests:
+        service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": requests}).execute()
     print(f"Updated {target_sheet} (row {target_row})")
 
 
@@ -584,10 +468,10 @@ def main():
         try:
             stats = get_stats()
             if stats is not None:
-                current_stats_text = json.dumps(stats, sort_keys=True)
-                if current_stats_text != last_stats_text:
+                current = json.dumps(stats, sort_keys=True)
+                if current != last_stats_text:
                     update_sheet_from_stats(stats)
-                    last_stats_text = current_stats_text
+                    last_stats_text = current
         except Exception as e:
             print(f"✗ Error: {e}")
         time.sleep(1)
