@@ -253,10 +253,14 @@ def normalize_missed_items(raw):
 
 
 
-def normalize_weapon_count(raw_info):
+def normalize_weapon_count(raw_info, label):
     if not raw_info:
-        return "0"
-    return f"{len(raw_info.get('Collected') or [])}|{len(raw_info.get('Available') or [])}"
+        return {"cell_value": "0", "note": ""}
+    collected  = raw_info.get("Collected") or []
+    available  = raw_info.get("Available") or []
+    missed     = available[len(collected):]
+    note       = " ; ".join(f"{label}: {int(v)}" for v in missed) if missed else ""
+    return {"cell_value": str(len(collected)), "note": note}
 
 
 def normalize_beehive_collected(bee_info, new_bee_format):
@@ -351,8 +355,8 @@ def normalize_stats(stats):
         "BeehiveValue":          beehive_value,
         "BeehiveCollected":      normalize_beehive_collected(bee_info, new_bee_format),
         "EggValue":              "|".join(str(v) for v in sorted(egg_avail)) if egg_avail else "",
-        "KnifeInfo":             normalize_weapon_count(stats.get("KnifeInfo")),
-        "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo")),
+        "KnifeInfo":             normalize_weapon_count(stats.get("KnifeInfo"), "Knife"),
+        "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo"), "Shotgun"),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
         "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
         "Scan":                  int(strip_apostrophe(normalize_missed_items(missed_items))),
@@ -360,7 +364,7 @@ def normalize_stats(stats):
         "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
         "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
         "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
-        "AppyLess":              stats.get("AppSpawned", False),
+        "AppyLess":              stats.get("AppSpawned", False) if interior == "Facility" else None,
         "IndoorFog":             stats.get("IndoorFog", False),
         "MeteorShower":          strip_apostrophe(stats.get("MeteorShowerTime", "")).strip(),
         "GiftBoxes":             normalize_gift_boxes(stats.get("GiftBoxesOpened") or []),
@@ -438,7 +442,19 @@ def update_sheet_from_stats(stats):
             queue(col, make_cell_value(outside["cell_value"]), outside["note"] or None)
             continue
 
-        if key in ("IndoorFog", "AppyLess"):
+        if key in ("KnifeInfo", "ShotgunInfo"):
+            weapon = normalized[key]
+            queue(col, make_cell_value(coerce_value(weapon["cell_value"])), weapon["note"] or None)
+            continue
+
+        if key == "AppyLess":
+            val = normalized["AppyLess"]
+            if val is None:
+                continue
+            queue(col, {"boolValue": bool(val)})
+            continue
+        
+        if key == "IndoorFog":
             queue(col, {"boolValue": bool(normalized[key])})
             continue
 
