@@ -236,10 +236,10 @@ def normalize_gift_boxes(raw):
     else:
         cell_value = ""
     note = "\n".join(
-        f"Gift {i}: GiftValue: {int(b.get('NewScrapValue', 0))} ; ItemValue: {int(b.get('GiftScrapValue', 0))}"
-        for i, b in enumerate(missed, 1)
+        f"Gift {i}: Box: {int(b.get('GiftScrapValue', 0))} ; Item: {int(b.get('NewScrapValue', 0))}"
+        for i, b in enumerate(missed, 1)    
     )
-    return {"collected_any": bool(collected), "cell_value": cell_value, "note": note}
+    return {"collected_any": bool(collected), "cell_value": cell_value, "note": note}   
 
 
 def normalize_missed_items(raw):
@@ -272,7 +272,7 @@ def normalize_beehive_collected(bee_info, new_bee_format):
     return str(len(collected))
 
 
-def normalize_outside_items_value(bee_info, egg_info):
+def normalize_outside_items_value(bee_info, egg_info, new_bee_format):
     bee_avail = [int(v) for v in (bee_info.get("Available") or [])]
     bee_coll  = [int(v) for v in (bee_info.get("Collected") or [])]
     egg_avail = [int(v) for v in (egg_info.get("Available") or [])]
@@ -281,6 +281,7 @@ def normalize_outside_items_value(bee_info, egg_info):
     total            = sum(bee_coll) + sum(egg_coll)
     bee_missed_small = sum(1 for v in bee_avail if v < 100)  - sum(1 for v in bee_coll if v < 100)
     bee_missed_large = sum(1 for v in bee_avail if v >= 100) - sum(1 for v in bee_coll if v >= 100)
+    bee_missed_total = sum(1 for v in bee_avail) - sum(1 for v in bee_coll)
 
     remaining_eggs = sorted(egg_avail)
     for v in sorted(egg_coll):
@@ -288,8 +289,12 @@ def normalize_outside_items_value(bee_info, egg_info):
             remaining_eggs.remove(v)
 
     note_parts = []
-    if bee_missed_small > 0 or bee_missed_large > 0:
-        note_parts.append(f"Bee ({bee_missed_small}|{bee_missed_large})")
+    if new_bee_format:
+        if bee_missed_small > 0 or bee_missed_large > 0:
+            note_parts.append(f"Bee ({bee_missed_small}|{bee_missed_large})")
+    else:
+        if bee_missed_total > 0:
+            note_parts.append(f"Bee ({bee_missed_total})")
     if remaining_eggs:
         note_parts.append(f"Egg ({', '.join(str(v) for v in remaining_eggs)})")
 
@@ -359,8 +364,8 @@ def normalize_stats(stats):
         "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo"), "Shotgun"),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
         "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
-        "Scan":                  int(strip_apostrophe(normalize_missed_items(missed_items))),
-        "OutsideItemsValue":     normalize_outside_items_value(bee_info, egg_info),
+        "Scan":                  normalize_missed_items(missed_items),
+        "OutsideItemsValue":     normalize_outside_items_value(bee_info, egg_info, new_bee_format),
         "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
         "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
         "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
@@ -370,7 +375,7 @@ def normalize_stats(stats):
         "GiftBoxes":             normalize_gift_boxes(stats.get("GiftBoxesOpened") or []),
         "Seed":                  strip_apostrophe(stats.get("Seed", "")),
         "Players":               players,
-        "PlayerNames":           player_names,),
+        "PlayerNames":           player_names,
     }
 
 
@@ -451,9 +456,9 @@ def update_sheet_from_stats(stats):
             val = normalized["AppyLess"]
             if val is None:
                 continue
-            queue(col, {"boolValue": bool(val)})
+            queue(col, {"boolValue": not bool(val)})
             continue
-        
+
         if key == "IndoorFog":
             queue(col, {"boolValue": bool(normalized[key])})
             continue
@@ -475,29 +480,29 @@ def update_sheet_from_stats(stats):
 
         queue(col, make_cell_value(coerce_value(value)))
 
-        if PLAYER_COLUMNS:
-            players      = normalized["Players"]
-            player_names = normalized["PlayerNames"]
-            if len(players) > len(PLAYER_COLUMNS):
-                print(f"⚠ More players ({len(players)}) than columns ({len(PLAYER_COLUMNS)}); extras ignored")
+    if PLAYER_COLUMNS:
+        players      = normalized["Players"]
+        player_names = normalized["PlayerNames"]
+        if len(players) > len(PLAYER_COLUMNS):
+            print(f"More players ({len(players)}) than columns ({len(PLAYER_COLUMNS)}); extras ignored")
 
-            sorted_pcols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
-            header_row   = START_ROW - 1
+        sorted_pcols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
+        header_row   = START_ROW - 1
 
-            header_range = f"{target_sheet}!{sorted_pcols[0]}{header_row}:{sorted_pcols[-1]}{header_row}"
-            header_result = service.spreadsheets().values().get(
-                spreadsheetId=SPREADSHEET_ID, range=header_range
-            ).execute()
-            existing_notes = (header_result.get("values") or [[]])[0]
+        header_range = f"{target_sheet}!{sorted_pcols[0]}{header_row}:{sorted_pcols[-1]}{header_row}"
+        header_result = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range=header_range
+        ).execute()
+        existing_names = (header_result.get("values") or [[]])[0]
 
-            name_requests = []
-            for i, pcol in enumerate(sorted_pcols):
-                if i >= len(players):
-                    break
-                name = player_names[i] if i < len(player_names) else ""
-                existing = existing_notes[i] if i < len(existing_notes) else ""
-                if name != existing:
-                    name_requests.append(build_update_request(sheet_id, pcol, header_row, make_cell_value(name), name))
+        name_requests = []
+        for i, pcol in enumerate(sorted_pcols):
+            if i >= len(players):
+                break
+            name = player_names[i] if i < len(player_names) else ""
+            existing = existing_names[i] if i < len(existing_names) else ""
+            if name != existing:
+                name_requests.append(build_update_request(sheet_id, pcol, header_row, make_cell_value(""), name or None))
 
         if name_requests:
             service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": name_requests}).execute()
