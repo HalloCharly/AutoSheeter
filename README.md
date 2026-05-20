@@ -2,7 +2,7 @@
 
 A Python script that automatically fills in your Google Sheet while running HQ in Lethal Company.
 
-**Required mod:** [LCStatsTracker]([https://thunderstore.io/c/lethal-company/p/MikuOreo/LCStatsTracker/]) on Thunderstore
+**Required mod:** [LCStatsTracker](https://thunderstore.io/c/lethal-company/p/MikuOreo/LCStatsTracker/) on Thunderstore
 
 ---
 
