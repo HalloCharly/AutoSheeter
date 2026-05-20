@@ -71,6 +71,7 @@ COLUMN_MAP = {
     "ValueSold":             cfg_get("Columns", "ValueSold"),
     "SIDType":               cfg_get("Columns", "SID"),
     "InfestationType":       cfg_get("Columns", "Infestation"),
+    "AppyLess":              cfg_get("Columns", "AppyLess"),
     "IndoorFog":             cfg_get("Columns", "IndoorFog"),
     "MeteorShower":          cfg_get("Columns", "MeteorShower"),
     "GiftBoxes":             cfg_get("Columns", "GiftBoxes"),
@@ -189,7 +190,7 @@ def build_update_request(sheet_id, col, row, user_entered_value, note=None):
 
 def normalize_players(raw_players):
     players = []
-    for data in raw_players.values():
+    for data in sorted(raw_players.values(), key=lambda d: d.get("Name", "").lower()):
         cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
         time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
 
@@ -245,7 +246,7 @@ def normalize_missed_items(raw):
 
 def normalize_weapon_count(raw_info):
     if not raw_info:
-        return "0|0"
+        return "0"
     return f"{len(raw_info.get('Collected') or [])}|{len(raw_info.get('Available') or [])}"
 
 
@@ -344,11 +345,12 @@ def normalize_stats(stats):
         "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo")),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
         "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
-        "Scan":                  normalize_missed_items(missed_items),
+        "Scan":                  int(strip_apostrophe(normalize_missed_items(missed_items))),
         "OutsideItemsValue":     normalize_outside_items_value(bee_info, egg_info),
         "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
         "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
         "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
+        "AppyLess":              stats.get("AppSpawned", False),
         "IndoorFog":             stats.get("IndoorFog", False),
         "MeteorShower":          strip_apostrophe(stats.get("MeteorShowerTime", "")).strip(),
         "GiftBoxes":             normalize_gift_boxes(stats.get("GiftBoxesOpened") or []),
@@ -425,8 +427,8 @@ def update_sheet_from_stats(stats):
             queue(col, make_cell_value(outside["cell_value"]), outside["note"] or None)
             continue
 
-        if key == "IndoorFog":
-            queue(col, {"boolValue": bool(normalized["IndoorFog"])})
+        if key in ("IndoorFog", "AppyLess"):
+            queue(col, {"boolValue": bool(normalized[key])})
             continue
 
         if key in ("MeteorShower", "SIDType", "InfestationType"):
