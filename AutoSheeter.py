@@ -190,9 +190,11 @@ def build_update_request(sheet_id, col, row, user_entered_value, note=None):
 
 def normalize_players(raw_players):
     players = []
-    for data in sorted(raw_players.values(), key=lambda d: d.get("Name", "").lower()):
+    names = []
+    for steam_id, data in sorted(raw_players.items(), key=lambda item: int(item[0])):
         cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
         time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
+        names.append(data.get("Name", steam_id))
 
         if data.get("Disconnected"):
             status = "DC"
@@ -213,7 +215,7 @@ def normalize_players(raw_players):
             note = "\n".join(parts)
 
         players.append({"status": status, "note": note})
-    return players
+    return players, names
 
 
 def normalize_gift_boxes(raw):
@@ -330,6 +332,7 @@ def normalize_stats(stats):
     raw_players = stats.get("Players") or {}
     if not isinstance(raw_players, dict):
         raw_players = {}
+    players, player_names = normalize_players(raw_players)
 
     return {
         "NewQuota":              int(strip_apostrophe(stats.get("NewQuota", 0))),
@@ -355,7 +358,8 @@ def normalize_stats(stats):
         "MeteorShower":          strip_apostrophe(stats.get("MeteorShowerTime", "")).strip(),
         "GiftBoxes":             normalize_gift_boxes(stats.get("GiftBoxesOpened") or []),
         "Seed":                  strip_apostrophe(stats.get("Seed", "")),
-        "Players":               normalize_players(raw_players),
+        "Players":               players,
+        "PlayerNames":           player_names,),
     }
 
 
@@ -448,11 +452,34 @@ def update_sheet_from_stats(stats):
 
         queue(col, make_cell_value(coerce_value(value)))
 
-    if PLAYER_COLUMNS:
-        players = normalized["Players"]
-        if len(players) > len(PLAYER_COLUMNS):
-            print(f"⚠ More players ({len(players)}) than columns ({len(PLAYER_COLUMNS)}); extras ignored")
-        for i, pcol in enumerate(sorted(PLAYER_COLUMNS, key=col_letter_to_index)):
+        if PLAYER_COLUMNS:
+            players      = normalized["Players"]
+            player_names = normalized["PlayerNames"]
+            if len(players) > len(PLAYER_COLUMNS):
+                print(f"⚠ More players ({len(players)}) than columns ({len(PLAYER_COLUMNS)}); extras ignored")
+
+            sorted_pcols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
+            header_row   = START_ROW - 1
+
+            header_range = f"{target_sheet}!{sorted_pcols[0]}{header_row}:{sorted_pcols[-1]}{header_row}"
+            header_result = service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range=header_range
+            ).execute()
+            existing_notes = (header_result.get("values") or [[]])[0]
+
+            name_requests = []
+            for i, pcol in enumerate(sorted_pcols):
+                if i >= len(players):
+                    break
+                name = player_names[i] if i < len(player_names) else ""
+                existing = existing_notes[i] if i < len(existing_notes) else ""
+                if name != existing:
+                    name_requests.append(build_update_request(sheet_id, pcol, header_row, make_cell_value(name), name))
+
+        if name_requests:
+            service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": name_requests}).execute()
+
+        for i, pcol in enumerate(sorted_pcols):
             if i >= len(players):
                 break
             p = players[i]
