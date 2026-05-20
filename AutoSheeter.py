@@ -203,7 +203,14 @@ def normalize_players(raw_players):
         elif data.get("Alive"):
             status = "S"
         else:
-            status = "X"
+            late_death = False
+            if time_of_death:
+                try:
+                    h, m = map(int, time_of_death.split(":")[:2])
+                    late_death = (h == 22 and m >= 45) or h >= 23
+                except (ValueError, AttributeError):
+                    pass
+            status = "SX" if late_death else "X"
 
         note = ""
         if status != "M":
