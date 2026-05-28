@@ -195,7 +195,6 @@ def normalize_players(raw_players):
         cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
         time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
         names.append(data.get("Name", steam_id))
-
         if data.get("Disconnected"):
             status = "DC"
         elif cause_of_death.lower() in ("abandonment", "abandoned"):
@@ -206,12 +205,19 @@ def normalize_players(raw_players):
             late_death = False
             if time_of_death:
                 try:
-                    h, m = map(int, time_of_death.split(":")[:2])
-                    late_death = (h == 22 and m >= 45) or h >= 23
+                    t = time_of_death.strip().upper()
+                    is_pm = t.endswith("PM")
+                    is_am = t.endswith("AM")
+                    t_clean = t.replace("PM", "").replace("AM", "").strip()
+                    h, m = map(int, t_clean.split(":")[:2])
+                    if is_pm and h != 12:
+                        h += 12
+                    elif is_am and h == 12:
+                        h = 0
+                    late_death = (h == 22 and m >= 30) or h >= 23
                 except (ValueError, AttributeError):
                     pass
             status = "SX" if late_death else "X"
-
         note = ""
         if status != "M":
             parts = []
@@ -220,7 +226,6 @@ def normalize_players(raw_players):
             if cause_of_death:
                 parts.append(f"Cause of Death: {cause_of_death}")
             note = "\n".join(parts)
-
         players.append({"status": status, "note": note})
     return players, names
 
@@ -439,7 +444,7 @@ def update_sheet_from_stats(stats):
 
         if key == "Scan":
             missed = normalized["Scan"]
-            queue(col, make_cell_value(missed["cell_value"] or "X"), missed["note"] or None)
+            queue(col, make_cell_value(missed["cell_value"] or ""), missed["note"] or None)
             continue
 
         if key == "OutsideItemsValue":
