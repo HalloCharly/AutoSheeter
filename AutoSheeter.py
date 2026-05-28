@@ -247,14 +247,28 @@ def normalize_gift_boxes(raw):
     return {"collected_any": bool(collected), "cell_value": cell_value, "note": note}   
 
 
-def normalize_missed_items(raw):
+def normalize_missed_items(raw, gift_boxes=None):
     if not raw:
         return {"cell_value": "", "note": ""}
     uncollected = [i for i in raw if not i.get("CollectedOnPreviousDay")]
     if not uncollected:
         return {"cell_value": "", "note": ""}
-    note = "\n".join(f"{i.get('ItemType', 'Unknown')}: {int(i.get('Value', 0))}" for i in uncollected)
-    return {"cell_value": str(len(uncollected)), "note": note}
+
+    collected_gift_values = set()
+    for box in (gift_boxes or []):
+        if box.get("Collected"):
+            collected_gift_values.add(int(box.get("NewScrapValue", 0)))
+
+    filtered = [
+        i for i in uncollected
+        if int(i.get("ScrapInsideGiftValue", 0)) == 0
+        or int(i.get("ScrapInsideGiftValue", 0)) not in collected_gift_values
+    ]
+
+    if not filtered:
+        return {"cell_value": "", "note": ""}
+    note = "\n".join(f"{i.get('ItemType', 'Unknown')}: {int(i.get('Value', 0))}" for i in filtered)
+    return {"cell_value": str(len(filtered)), "note": note}
 
 
 
@@ -369,7 +383,7 @@ def normalize_stats(stats):
         "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo"), "Shotgun"),
         "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
         "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
-        "Scan":                  normalize_missed_items(missed_items),
+        "Scan":                  normalize_missed_items(missed_items, stats.get("GiftBoxesOpened") or []),
         "OutsideItemsValue":     normalize_outside_items_value(bee_info, egg_info, new_bee_format),
         "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
         "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
