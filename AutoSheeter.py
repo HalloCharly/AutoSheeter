@@ -188,9 +188,29 @@ def build_update_request(sheet_id, col, row, user_entered_value, note=None):
     }}
 
 
-def normalize_players(raw_players):
+def normalize_players(raw_players, take_off_time=None):
     players = []
     names = []
+
+    def parse_time_to_minutes(t_str):
+        if not t_str:
+            return None
+        try:
+            t = t_str.strip().upper()
+            is_pm = t.endswith("PM")
+            is_am = t.endswith("AM")
+            t_clean = t.replace("PM", "").replace("AM", "").strip()
+            h, m = map(int, t_clean.split(":")[:2])
+            if is_pm and h != 12:
+                h += 12
+            elif is_am and h == 12:
+                h = 0
+            return h * 60 + m
+        except (ValueError, AttributeError):
+            return None
+
+    take_off_minutes = parse_time_to_minutes(take_off_time)
+
     for steam_id, data in sorted(raw_players.items(), key=lambda item: int(item[0])):
         cause_of_death = strip_apostrophe(data.get("CauseOfDeath", "")).strip()
         time_of_death  = strip_apostrophe(data.get("TimeOfDeath", "")).strip()
@@ -203,20 +223,11 @@ def normalize_players(raw_players):
             status = "S"
         else:
             late_death = False
-            if time_of_death:
-                try:
-                    t = time_of_death.strip().upper()
-                    is_pm = t.endswith("PM")
-                    is_am = t.endswith("AM")
-                    t_clean = t.replace("PM", "").replace("AM", "").strip()
-                    h, m = map(int, t_clean.split(":")[:2])
-                    if is_pm and h != 12:
-                        h += 12
-                    elif is_am and h == 12:
-                        h = 0
-                    late_death = (h == 22 and m >= 30) or h >= 23
-                except (ValueError, AttributeError):
-                    pass
+            death_minutes = parse_time_to_minutes(time_of_death)
+            if death_minutes is not None:
+                late_night = death_minutes >= 22 * 60 + 30
+                after_takeoff = take_off_minutes is not None and death_minutes >= take_off_minutes
+                late_death = late_night or after_takeoff
             status = "SX" if late_death else "X"
         note = ""
         if status != "M":
@@ -247,28 +258,14 @@ def normalize_gift_boxes(raw):
     return {"collected_any": bool(collected), "cell_value": cell_value, "note": note}   
 
 
-def normalize_missed_items(raw, gift_boxes=None):
+def normalize_missed_items(raw):
     if not raw:
         return {"cell_value": "", "note": ""}
     uncollected = [i for i in raw if not i.get("CollectedOnPreviousDay")]
     if not uncollected:
         return {"cell_value": "", "note": ""}
-
-    collected_gift_values = set()
-    for box in (gift_boxes or []):
-        if box.get("Collected"):
-            collected_gift_values.add(int(box.get("NewScrapValue", 0)))
-
-    filtered = [
-        i for i in uncollected
-        if int(i.get("ScrapInsideGiftValue", 0)) == 0
-        or int(i.get("ScrapInsideGiftValue", 0)) not in collected_gift_values
-    ]
-
-    if not filtered:
-        return {"cell_value": "", "note": ""}
-    note = "\n".join(f"{i.get('ItemType', 'Unknown')}: {int(i.get('Value', 0))}" for i in filtered)
-    return {"cell_value": str(len(filtered)), "note": note}
+    note = "\n".join(f"{i.get('ItemType', 'Unknown')}: {int(i.get('Value', 0))}" for i in uncollected)
+    return {"cell_value": str(len(uncollected)), "note": note}
 
 
 
@@ -329,6 +326,9 @@ def normalize_stats(stats):
     bee_info     = stats.get("BeeInfo") or {}
     egg_info     = stats.get("EggInfo") or {}
     missed_items = stats.get("MissedItems") or []
+    event_info   = stats.get("EventInfo") or {}
+    perf_info    = stats.get("PerformanceInfo") or {}
+    quota_info   = stats.get("QuotaInfo") or {}
 
     bee_avail = [int(v) for v in (bee_info.get("Available") or [])]
     egg_avail = [int(v) for v in (egg_info.get("Available") or [])]
@@ -367,10 +367,11 @@ def normalize_stats(stats):
     raw_players = stats.get("Players") or {}
     if not isinstance(raw_players, dict):
         raw_players = {}
-    players, player_names = normalize_players(raw_players)
+    take_off_time = strip_apostrophe(event_info.get("TakeOffTime", "")).strip()
+    players, player_names = normalize_players(raw_players, take_off_time)
 
     return {
-        "NewQuota":              int(strip_apostrophe(stats.get("NewQuota", 0))),
+        "NewQuota":              int(strip_apostrophe(quota_info.get("NewQuota", 0))),
         "MoonInfo_Name":         moon_name,
         "MoonInfo_Weather":      weather,
         "DungeonInfo_Interior":  interior,
@@ -381,16 +382,16 @@ def normalize_stats(stats):
         "EggValue":              "|".join(str(v) for v in sorted(egg_avail)) if egg_avail else "",
         "KnifeInfo":             normalize_weapon_count(stats.get("KnifeInfo"), "Knife"),
         "ShotgunInfo":           normalize_weapon_count(stats.get("ShotgunInfo"), "Shotgun"),
-        "CollectedTotal":        int(strip_apostrophe(stats.get("CollectedTotal", 0))),
-        "BottomLine":            int(strip_apostrophe(stats.get("BottomLine", 0))),
-        "Scan":                  normalize_missed_items(missed_items, stats.get("GiftBoxesOpened") or []),
+        "CollectedTotal":        int(strip_apostrophe(perf_info.get("CollectedTotal", 0))),
+        "BottomLine":            int(strip_apostrophe(perf_info.get("InitialAvailableValue", 0))),
+        "Scan":                  normalize_missed_items(missed_items),
         "OutsideItemsValue":     normalize_outside_items_value(bee_info, egg_info, new_bee_format),
-        "ValueSold":             int(strip_apostrophe(stats.get("ValueSold", 0))),
-        "SIDType":               strip_apostrophe(stats.get("SIDType", "")),
-        "InfestationType":       strip_apostrophe(stats.get("InfestationType", "")),
-        "AppyLess":              stats.get("AppSpawned", False) if interior == "Facility" else None,
-        "IndoorFog":             stats.get("IndoorFog", False),
-        "MeteorShower":          strip_apostrophe(stats.get("MeteorShowerTime", "")).strip(),
+        "ValueSold":             int(strip_apostrophe(quota_info.get("ValueSold", 0))),
+        "SIDType":               strip_apostrophe(event_info.get("SIDType", "")),
+        "InfestationType":       strip_apostrophe(event_info.get("InfestationType", "")),
+        "AppyLess":              event_info.get("AppSpawned", False) if interior == "Facility" else None,
+        "IndoorFog":             event_info.get("IndoorFog", False),
+        "MeteorShower":          strip_apostrophe(event_info.get("MeteorShowerTime", "")).strip(),
         "GiftBoxes":             normalize_gift_boxes(stats.get("GiftBoxesOpened") or []),
         "Seed":                  strip_apostrophe(stats.get("Seed", "")),
         "Players":               players,
@@ -446,57 +447,45 @@ def update_sheet_from_stats(stats):
         print(f"Updated {target_sheet} (Gordion: sold={value_sold}, quota={new_quota})")
         return
 
+    BOOL_KEYS      = {"IndoorFog", "AppyLess", "MeteorShower", "SIDType", "InfestationType"}
+    BOOL_NOTE_KEYS = {"MeteorShower", "SIDType", "InfestationType"}
+    DICT_KEYS      = {"Scan", "OutsideItemsValue", "GiftBoxes"}
+
     for key in sorted_column_map_keys(COLUMN_MAP):
         col = COLUMN_MAP[key]
         if col is None:
             continue
 
-        if key == "GiftBoxes":
-            gift = normalized["GiftBoxes"]
-            queue(col, make_cell_value(gift["cell_value"] if gift["collected_any"] else "X"), gift["note"] or None)
-            continue
-
-        if key == "Scan":
-            missed = normalized["Scan"]
-            queue(col, make_cell_value(missed["cell_value"] or ""), missed["note"] or None)
-            continue
-
-        if key == "OutsideItemsValue":
-            outside = normalized["OutsideItemsValue"]
-            queue(col, make_cell_value(outside["cell_value"]), outside["note"] or None)
+        if key in DICT_KEYS:
+            d = normalized[key]
+            if key == "GiftBoxes":
+                queue(col, make_cell_value(d["cell_value"] if d["collected_any"] else "X"), d["note"] or None)
+            else:
+                queue(col, make_cell_value(d["cell_value"] or ""), d["note"] or None)
             continue
 
         if key in ("KnifeInfo", "ShotgunInfo"):
-            weapon = normalized[key]
-            queue(col, make_cell_value(coerce_value(weapon["cell_value"])), weapon["note"] or None)
+            w = normalized[key]
+            queue(col, make_cell_value(coerce_value(w["cell_value"])), w["note"] or None)
             continue
 
-        if key == "AppyLess":
-            val = normalized["AppyLess"]
+        if key in BOOL_KEYS:
+            val = normalized[key]
             if val is None:
                 continue
-            queue(col, {"boolValue": not bool(val)})
-            continue
-
-        if key == "IndoorFog":
-            queue(col, {"boolValue": bool(normalized[key])})
-            continue
-
-        if key in ("MeteorShower", "SIDType", "InfestationType"):
-            val     = normalized[key]
-            checked = bool(str(val).strip())
-            queue(col, {"boolValue": checked}, str(val) if checked else None)
+            if key in ("AppyLess", "IndoorFog"):
+                queue(col, {"boolValue": not bool(val)})
+            else:
+                checked = bool(str(val).strip())
+                queue(col, {"boolValue": checked}, str(val) if key in BOOL_NOTE_KEYS and checked else None)
             continue
 
         value = normalized[key]
-
         if key in ("ValueSold", "NewQuota") and value == 0:
             continue
-
         if key in ("EggValue", "BeehiveAmount", "BeehiveValue", "BeehiveCollected") and value == "":
             queue(col, make_cell_value("X"))
             continue
-
         queue(col, make_cell_value(coerce_value(value)))
 
     if PLAYER_COLUMNS:
@@ -508,7 +497,7 @@ def update_sheet_from_stats(stats):
         sorted_pcols = sorted(PLAYER_COLUMNS, key=col_letter_to_index)
         header_row   = START_ROW - 1
 
-        header_range = f"{target_sheet}!{sorted_pcols[0]}{header_row}:{sorted_pcols[-1]}{header_row}"
+        header_range  = f"{target_sheet}!{sorted_pcols[0]}{header_row}:{sorted_pcols[-1]}{header_row}"
         header_result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, range=header_range
         ).execute()
@@ -518,7 +507,7 @@ def update_sheet_from_stats(stats):
         for i, pcol in enumerate(sorted_pcols):
             if i >= len(players):
                 break
-            name = player_names[i] if i < len(player_names) else ""
+            name     = player_names[i] if i < len(player_names) else ""
             existing = existing_names[i] if i < len(existing_names) else ""
             if name != existing:
                 name_requests.append(build_update_request(sheet_id, pcol, header_row, make_cell_value(""), name or None))
