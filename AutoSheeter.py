@@ -229,7 +229,11 @@ def normalize_players(raw_players, take_off_time=None):
             death_minutes = parse_time_to_minutes(time_of_death)
             if death_minutes is not None:
                 late_night = death_minutes >= 22 * 60 + 30
-                after_takeoff = take_off_minutes is not None and death_minutes >= take_off_minutes
+                after_takeoff = (
+                    take_off_minutes is not None
+                    and take_off_minutes >= 22 * 60 + 30
+                    and death_minutes >= take_off_minutes
+                )
                 late_death = late_night or after_takeoff
             status = "SX" if late_death else "X"
         note = ""
@@ -372,6 +376,12 @@ def normalize_stats(stats):
         raw_players = {}
     take_off_time = strip_apostrophe(event_info.get("TakeOffTime", "")).strip()
     players, player_names = normalize_players(raw_players, take_off_time)
+
+    INTERIOR_ALIASES = {
+        "Museum Interior": "Art Gallery",
+        "Aquatic Dungeon": "Atlantean Citadel",
+    }
+    interior = INTERIOR_ALIASES.get(interior, interior)
 
     return {
         "NewQuota":              int(strip_apostrophe(quota_info.get("NewQuota", 0))),
