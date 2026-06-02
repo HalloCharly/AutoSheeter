@@ -35,6 +35,12 @@ Once the config is set up, just run the script and it will start tracking your H
 
 ---
 
+## Layout Reference
+
+If you need a pre-made layout for your tracker sheet, check out [HalloCharly's Autosheeter](https://docs.google.com/spreadsheets/d/1Mtx734peXgtqdeWFa76z5E8fNHOb8Z3mnPg8tRzfGFc/edit?gid=596550061#gid=596550061). You can copy it and customize it to your needs.
+
+---
+
 ## Notes
 
 - You must save `config.ini` every time you make a change for it to take effect.

@@ -52,6 +52,9 @@ if not target_sheet:
 raw_players_cfg = cfg_get("Columns", "Players")
 PLAYER_COLUMNS  = [c.strip() for c in raw_players_cfg.split(",") if c.strip()] if raw_players_cfg else []
 
+VERSION_ROW    = cfg_get_int("Sheet", "version_row")
+VERSION_COLUMN = cfg_get("Sheet", "version_column")
+
 COLUMN_MAP = {
     "NewQuota":              cfg_get("Columns", "NewQuota"),
     "MoonInfo_Name":         cfg_get("Columns", "MoonInfo_Name"),
@@ -396,6 +399,7 @@ def normalize_stats(stats):
         "Seed":                  strip_apostrophe(stats.get("Seed", "")),
         "Players":               players,
         "PlayerNames":           player_names,
+        "Version":               int(strip_apostrophe(stats.get("Version", 0))) if stats.get("Version") is not None else None,
     }
 
 
@@ -473,8 +477,10 @@ def update_sheet_from_stats(stats):
             val = normalized[key]
             if val is None:
                 continue
-            if key in ("AppyLess", "IndoorFog"):
+            if key == "AppyLess":
                 queue(col, {"boolValue": not bool(val)})
+            elif key == "IndoorFog":
+                queue(col, {"boolValue": bool(val)})
             else:
                 checked = bool(str(val).strip())
                 queue(col, {"boolValue": checked}, str(val) if key in BOOL_NOTE_KEYS and checked else None)
@@ -487,6 +493,11 @@ def update_sheet_from_stats(stats):
             queue(col, make_cell_value("X"))
             continue
         queue(col, make_cell_value(coerce_value(value)))
+
+    if VERSION_ROW is not None and VERSION_COLUMN:
+        version_value = normalized.get("Version")
+        if version_value is not None:
+            requests.append(build_update_request(sheet_id, VERSION_COLUMN, VERSION_ROW, make_cell_value(version_value)))
 
     if PLAYER_COLUMNS:
         players      = normalized["Players"]
