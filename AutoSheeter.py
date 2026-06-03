@@ -98,6 +98,24 @@ if disabled:
 if not PLAYER_COLUMNS:
     print("Player columns disabled.")
 
+# Keys skipped per exact version. Version 70+ skips nothing.
+_VERSION_SKIP_KEYS = {
+    40: {"EggValue", "KnifeInfo", "SIDType", "InfestationType", "IndoorFog", "MeteorShower", "ShotgunInfo", "GiftBoxes"},
+    45: {"EggValue", "KnifeInfo", "SIDType", "InfestationType", "IndoorFog", "MeteorShower"},
+    49: {"EggValue", "KnifeInfo", "SIDType", "InfestationType", "IndoorFog", "MeteorShower"},
+    50: {"EggValue", "InfestationType", "IndoorFog", "MeteorShower"},
+    56: {"EggValue", "InfestationType", "IndoorFog", "MeteorShower"},
+    62: {"EggValue", "InfestationType", "IndoorFog", "MeteorShower"},
+    64: {"EggValue", "IndoorFog", "InfestationType"},
+    69: {"EggValue"},
+}
+
+
+def get_version_skip_keys(version):
+    if version is None or version >= 70:
+        return set()
+    return _VERSION_SKIP_KEYS.get(version, set())
+
 
 def col_letter_to_index(col):
     col = col.upper()
@@ -439,11 +457,13 @@ def get_next_empty_row():
 
 
 def update_sheet_from_stats(stats):
-    normalized = normalize_stats(stats)
-    target_row = get_next_empty_row()
-    moon_name  = normalized["MoonInfo_Name"]
-    sheet_id   = get_sheet_id(target_sheet)
-    requests   = []
+    normalized   = normalize_stats(stats)
+    target_row   = get_next_empty_row()
+    moon_name    = normalized["MoonInfo_Name"]
+    sheet_id     = get_sheet_id(target_sheet)
+    requests     = []
+    version      = normalized.get("Version")
+    skip_keys    = get_version_skip_keys(version)
 
     def queue(col, uev, note=None):
         requests.append(build_update_request(sheet_id, col, target_row, uev, note))
@@ -468,6 +488,8 @@ def update_sheet_from_stats(stats):
     for key in sorted_column_map_keys(COLUMN_MAP):
         col = COLUMN_MAP[key]
         if col is None:
+            continue
+        if key in skip_keys:
             continue
 
         if key in DICT_KEYS:
