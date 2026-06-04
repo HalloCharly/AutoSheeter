@@ -98,7 +98,6 @@ if disabled:
 if not PLAYER_COLUMNS:
     print("Player columns disabled.")
 
-# Keys skipped per exact version. Version 70+ skips nothing.
 _VERSION_SKIP_KEYS = {
     40: {"EggValue", "KnifeInfo", "SIDType", "InfestationType", "IndoorFog", "MeteorShower", "ShotgunInfo", "GiftBoxes"},
     45: {"EggValue", "KnifeInfo", "SIDType", "InfestationType", "IndoorFog", "MeteorShower"},
@@ -241,7 +240,7 @@ def normalize_players(raw_players, take_off_time=None):
         elif cause_of_death.lower() in ("abandonment", "abandoned"):
             status = "M"
         elif data.get("Alive"):
-            status = "S"
+            status = "A"
         else:
             late_death = False
             death_minutes = parse_time_to_minutes(time_of_death)
@@ -253,7 +252,7 @@ def normalize_players(raw_players, take_off_time=None):
                     and death_minutes >= take_off_minutes
                 )
                 late_death = late_night or after_takeoff
-            status = "SX" if late_death else "X"
+            status = "S" if late_death else "X"
         note = ""
         if status != "M":
             parts = []
